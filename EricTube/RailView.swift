@@ -1,64 +1,12 @@
 import SwiftUI
 import WebKit
 
+// The sessions column: Master pinned, watch tabs below. Segments
+// (Subscriptions / Library) land in later phases.
 struct RailView: View {
 	@ObservedObject var sessions: WebSessionManager
-	@AppStorage("railCollapsed") private var collapsed = false
 
 	var body: some View {
-		VStack(spacing: 0) {
-			if collapsed {
-				collapsedStrip
-			} else {
-				topStrip
-				sessionList
-			}
-			Spacer(minLength: 0)
-		}
-		.frame(width: collapsed ? 72 : 280)
-		.frame(maxHeight: .infinity)
-		.background(Color(nsColor: .windowBackgroundColor))
-	}
-
-	// Eric's sketch, left to right: traffic lights, collapse, soft divider,
-	// jump-to cluster (watch list, favorite video lists, music, favorite
-	// music lists), stronger divider, back/forward. Jump-to buttons stub
-	// until their phases land.
-	private var topStrip: some View {
-		HStack(spacing: 8) {
-			Spacer()
-				.frame(width: 54)
-			IconButton("sidebar.left", help: "Collapse rail") { collapsed = true }
-			railDivider(14)
-			IconButton("text.badge.star", help: "Current watch list (Phase 4)") {}
-				.disabled(true)
-			IconButton("star", help: "Favorite video lists (Phase 3)") {}
-				.disabled(true)
-			IconButton("music.note", help: "Music", active: sessions.active == .music) {
-				sessions.showMusic()
-			}
-			IconButton("star.square.on.square", help: "Favorite music lists (Phase 3)") {}
-				.disabled(true)
-			railDivider(20)
-			NavButtons(sessions: sessions)
-				.id(sessions.active)
-			Spacer(minLength: 0)
-		}
-		.padding(.leading, 8)
-		.frame(height: 38)
-	}
-
-	private var collapsedStrip: some View {
-		VStack(spacing: 12) {
-			Spacer()
-				.frame(height: 26)
-			IconButton("sidebar.right", help: "Expand rail") { collapsed = false }
-			NavButtons(sessions: sessions)
-				.id(sessions.active)
-		}
-	}
-
-	private var sessionList: some View {
 		VStack(alignment: .leading, spacing: 2) {
 			SessionRow(
 				icon: "house", title: "Master",
@@ -70,66 +18,18 @@ struct RailView: View {
 			}
 			if sessions.watchSessions.isEmpty {
 				Text("watch tabs appear here")
-					.font(.caption)
+					.font(.system(size: 13))
 					.foregroundStyle(.quaternary)
 					.padding(.leading, 10)
 					.padding(.top, 4)
 			}
+			Spacer(minLength: 0)
 		}
 		.padding(.horizontal, 8)
 		.padding(.top, 8)
-	}
-
-	private func railDivider(_ height: CGFloat) -> some View {
-		Rectangle()
-			.fill(Color.primary.opacity(0.12))
-			.frame(width: 1, height: height)
-	}
-}
-
-struct IconButton: View {
-	let systemName: String
-	let help: String
-	var active = false
-	let action: () -> Void
-
-	init(_ systemName: String, help: String, active: Bool = false, action: @escaping () -> Void) {
-		self.systemName = systemName
-		self.help = help
-		self.active = active
-		self.action = action
-	}
-
-	var body: some View {
-		Button(action: action) {
-			Image(systemName: systemName)
-				.foregroundStyle(active ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
-		}
-		.buttonStyle(.borderless)
-		.help(help)
-	}
-}
-
-// Subscribed to the active session's history state; .id(sessions.active) at
-// the call sites forces a resubscribe when the active session changes.
-struct NavButtons: View {
-	@ObservedObject var sessions: WebSessionManager
-	@State private var canGoBack = false
-	@State private var canGoForward = false
-
-	var body: some View {
-		HStack(spacing: 8) {
-			IconButton("chevron.backward", help: "Back") {
-				sessions.activeWebView.goBack()
-			}
-			.disabled(!canGoBack)
-			IconButton("chevron.forward", help: "Forward") {
-				sessions.activeWebView.goForward()
-			}
-			.disabled(!canGoForward)
-		}
-		.onReceive(sessions.activeWebView.publisher(for: \.canGoBack)) { canGoBack = $0 }
-		.onReceive(sessions.activeWebView.publisher(for: \.canGoForward)) { canGoForward = $0 }
+		.frame(width: 280)
+		.frame(maxHeight: .infinity, alignment: .top)
+		.background(Color(nsColor: .windowBackgroundColor))
 	}
 }
 
@@ -141,9 +41,9 @@ struct SessionRow: View {
 	let close: (() -> Void)?
 
 	var body: some View {
-		HStack(spacing: 6) {
+		HStack(spacing: 8) {
 			Image(systemName: icon)
-				.frame(width: 16)
+				.frame(width: 24)
 			Text(title)
 				.lineLimit(1)
 				.truncationMode(.tail)
@@ -151,15 +51,15 @@ struct SessionRow: View {
 			if let close {
 				Button(action: close) {
 					Image(systemName: "xmark")
-						.font(.system(size: 9, weight: .bold))
+						.font(.system(size: 13, weight: .bold))
 				}
 				.buttonStyle(.borderless)
 				.help("Close tab")
 			}
 		}
-		.font(.system(size: 12))
-		.padding(.vertical, 5)
-		.padding(.horizontal, 8)
+		.font(.system(size: 18))
+		.padding(.vertical, 7)
+		.padding(.horizontal, 10)
 		.frame(maxWidth: .infinity, alignment: .leading)
 		.background(
 			RoundedRectangle(cornerRadius: 6)

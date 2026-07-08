@@ -2,23 +2,30 @@ import SwiftUI
 
 struct ContentView: View {
 	@ObservedObject var sessions: WebSessionManager
+	@AppStorage("railCollapsed") private var collapsed = false
 
 	var body: some View {
-		HStack(spacing: 0) {
-			RailView(sessions: sessions)
+		VStack(spacing: 0) {
+			TopBar(sessions: sessions)
 			Divider()
-			ZStack {
-				// Every session stays mounted; switching toggles opacity so
-				// hidden sessions keep playing and keep their place (music
-				// keeps going while browsing elsewhere).
-				ForEach(sessions.displayed) { entry in
-					WebView(webView: entry.webView)
-						.opacity(sessions.active == entry.key ? 1 : 0)
-						.allowsHitTesting(sessions.active == entry.key)
+			HStack(spacing: 0) {
+				if !collapsed {
+					RailView(sessions: sessions)
+					Divider()
 				}
-			}
-			.overlay(alignment: .topLeading) {
-				PaletteAnchor(sessions: sessions)
+				ZStack {
+					// Every session stays mounted; switching toggles opacity
+					// so hidden sessions keep playing and keep their place
+					// (music keeps going while browsing elsewhere).
+					ForEach(sessions.displayed) { entry in
+						WebView(webView: entry.webView)
+							.opacity(sessions.active == entry.key ? 1 : 0)
+							.allowsHitTesting(sessions.active == entry.key)
+					}
+				}
+				.overlay(alignment: .topLeading) {
+					PaletteAnchor(sessions: sessions)
+				}
 			}
 		}
 		.ignoresSafeArea()
