@@ -1,7 +1,8 @@
 # macOS
 .DS_Store
 
-# Xcode
+# Xcode (project is generated — run `xcodegen generate`)
+*.xcodeproj
 build/
 DerivedData/
 *.xcuserstate

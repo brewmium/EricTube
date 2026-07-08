@@ -1,0 +1,29 @@
+name: EricTube
+options:
+  bundleIdPrefix: com.brewmium
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    CODE_SIGN_STYLE: Automatic
+    CODE_SIGN_IDENTITY: "-"
+targets:
+  EricTube:
+    type: application
+    platform: macOS
+    sources:
+      - EricTube
+    info:
+      path: EricTube/Info.plist
+      properties:
+        CFBundleDisplayName: EricTube
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSApplicationCategoryType: public.app-category.entertainment
+        NSHighResolutionCapable: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.brewmium.EricTube
+        ENABLE_HARDENED_RUNTIME: false

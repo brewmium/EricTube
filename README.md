@@ -12,7 +12,25 @@ See [docs/CREATION.md](docs/CREATION.md) for the full design.
 
 ## Status
 
-Design phase. No code yet — the creation document is the source of truth.
+Phase 0 skeleton: master session on youtube.com, persistent login via the
+shared `WKWebsiteDataStore`, empty left-rail shell. The creation document
+remains the source of truth.
+
+## Building
+
+The Xcode project is generated, not checked in:
+
+```
+xcodegen generate
+open EricTube.xcodeproj
+```
+
+Or from the command line:
+
+```
+xcodebuild -project EricTube.xcodeproj -scheme EricTube -configuration Debug -derivedDataPath build build
+open build/Build/Products/Debug/EricTube.app
+```
 
 ## Stack
 
