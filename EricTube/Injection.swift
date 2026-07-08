@@ -47,7 +47,7 @@ enum Injection {
 				if (!id) { return; }
 				const r = a.getBoundingClientRect();
 				if (r.width < 100) { return; }
-				chip.style.left = (window.scrollX + r.right - 34) + 'px';
+				chip.style.left = (window.scrollX + r.left + 6) + 'px';
 				chip.style.top = (window.scrollY + r.top + 6) + 'px';
 				chip.style.display = 'block';
 				currentId = id;
@@ -61,10 +61,9 @@ enum Injection {
 			e.preventDefault();
 			e.stopPropagation();
 			if (!currentId) { return; }
-			const r = chip.getBoundingClientRect();
 			window.webkit.messageHandlers.erictube.postMessage({
 				kind: 'chip', videoId: currentId,
-				x: r.left, y: r.top, w: r.width, h: r.height
+				x: e.clientX, y: e.clientY, w: 1, h: 1
 			});
 		}, true);
 	})();

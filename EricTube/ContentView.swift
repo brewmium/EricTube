@@ -32,18 +32,20 @@ struct ContentView: View {
 	}
 }
 
-// Invisible 1x1 view positioned where the hover chip was clicked (the chip
-// reports viewport coordinates, which match this overlay's space); the
-// palette popover hangs off it.
+// Full-size invisible overlay; the palette pops from the exact click point
+// via attachmentAnchor (the chip reports viewport coordinates, which match
+// this overlay's space). Not a positioned 1x1 view: that could still sit at
+// its previous position in the render pass that presents the popover.
 private struct PaletteAnchor: View {
 	@ObservedObject var sessions: WebSessionManager
 
 	var body: some View {
 		let anchor = sessions.paletteRequest?.anchor ?? .zero
 		Color.clear
-			.frame(width: 1, height: 1)
-			.position(x: anchor.midX, y: anchor.maxY + 2)
-			.popover(item: $sessions.paletteRequest, arrowEdge: .bottom) { request in
+			.allowsHitTesting(false)
+			.popover(item: $sessions.paletteRequest,
+				attachmentAnchor: .rect(.rect(anchor)),
+				arrowEdge: .bottom) { request in
 				PaletteView(sessions: sessions, request: request)
 			}
 	}
