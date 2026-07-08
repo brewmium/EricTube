@@ -57,10 +57,13 @@ libraries, and a dedicated persistent music session.
 The core realization: this isn't one browser with tabs. It's **pinned sessions
 + ephemeral watch sessions**, all sharing one login.
 
-- **Music session — pinned, leftmost.** Its own persistent web view
-  (`music.youtube.com` or a music playlist). Keeps playing and keeps its
-  position while Eric browses or watches elsewhere; he toggles back to it. This
-  mirrors reserving the leftmost Chrome tabs for music.
+- **Music session — pinned, leftmost.** Its own persistent web view driven from
+  **his own music playlists** (one or several) — *not* YouTube Music. In a mood
+  for music, he opens a playlist and picks one, or goes to a creator and drills
+  in from there. Keeps playing and keeps its position while he browses or
+  watches elsewhere; he toggles back to it. Mirrors reserving the leftmost
+  Chrome tabs for music. Favorite playlists/creators pin to the top (the music
+  analogue of the P1 list in §6).
 - **Master session — pinned.** One always-alive web view on `youtube.com` in
   YouTube's native interface. This is home base for browsing/discovery. It
   **never reloads or loses its place** because something else was watched.
@@ -113,12 +116,27 @@ state (live vs kept reference). Filter by any of these.
 
 ## 6. Channels / subscriptions
 
-- Grouped by **genre** — this is the baseline findability that YouTube lacks.
-- Two explicit favorite tiers on top so the real favorites don't drown:
-  - **Shortlist** — "channels I want to find again."
-  - **Favorites** — the actual top ones.
-- Starring applies to **channels**; marking-to-watch applies to **videos**.
-- (Open: 2 tiers vs 3 levels of prominence — see §9.)
+Creator prominence, low to high:
+
+- **All channels grouped by genre** — the baseline findability YouTube lacks.
+- **Shortlist** — "channels I want to find again."
+- **Favorites** — the actual top ones.
+- **P1 / ultra-starred** — a pinned list at the very top of the lists. These
+  are creators who post so rarely they fall out of YouTube's algorithm, so today
+  Eric has to manually go *search* for them. Current P1: **Ave**, **Uri T.**,
+  **Wheelie Yellow**.
+
+Starring applies to **channels**; marking-to-watch applies to **videos**.
+
+### Check-for-new (the fix for the P1 problem)
+
+Because P1 creators never surface in the algorithm, EricTube should
+**proactively fetch their latest uploads** via the Data API (each channel's
+uploads playlist / `activities`) and show **"new since last checked."** That
+turns "it's hard to get to them" into a solved problem, and the same mechanism
+serves the pinned music playlists/creators. This is the feature that becomes the
+**killer app on the planned Apple TV port** — one-remote access to "what's new
+from my must-watch creators" instead of manually searching three names.
 
 ## 7. UI / layout
 
@@ -151,7 +169,6 @@ state (live vs kept reference). Filter by any of these.
 - **List/sub-list mechanics** — decided after playlist import (§8).
 - **Kebab action set** — the full list of per-entry actions (§7).
 - **Channel prominence** — two tiers (shortlist + favorites) vs three levels.
-- **Music source** — YouTube Music vs a curated playlist as the music session.
 - **Concurrency UX** — how to handle Premium's one-active-stream limit when
   music + a video are both loaded (auto-pause the unfocused one?).
 - **⌘-click** — whether to add it later as a power-user alternative to hover.
@@ -168,5 +185,9 @@ state (live vs kept reference). Filter by any of these.
   genre → list; Active/Archived reference state.
 - **Phase 4 — Watch pipeline.** Next / Later / Maybe tiers with promote/demote;
   the top bar.
-- **Phase 5 — Channel tiers + per-entry actions.** Shortlist/favorites; the
-  kebab action set; refinement once Eric has touched it.
+- **Phase 5 — Channel tiers + per-entry actions.** Shortlist/favorites/P1; the
+  P1 "check-for-new" upload feed; the kebab action set; refinement once Eric has
+  touched it.
+
+**Future — Apple TV port.** The macOS design is meant to carry to tvOS, where
+the P1 "what's new from my must-watch creators" feed is the big fix.
