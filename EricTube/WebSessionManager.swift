@@ -94,10 +94,15 @@ final class WebSessionManager: ObservableObject {
 	}
 
 	func openWatchTab(videoId raw: String) {
-		paletteRequest = nil
 		let videoId = raw.filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
 		guard !videoId.isEmpty else { return }
+		openTab(path: "/watch?v=\(videoId)")
+	}
 
+	// Any youtube.com path (watch, channel, playlist) as an ephemeral tab,
+	// via the warm pool when one is ready.
+	func openTab(path: String) {
+		paletteRequest = nil
 		let webView: WKWebView
 		if let recycled = parked.popLast() {
 			webView = recycled
@@ -105,9 +110,9 @@ final class WebSessionManager: ObservableObject {
 			webView = makeWebView(kind: "watch", url: nil)
 		}
 		if !webView.isLoading, webView.url?.host?.hasSuffix("youtube.com") == true {
-			webView.evaluateJavaScript(Injection.spaNavigate(path: "/watch?v=\(videoId)"), completionHandler: nil)
+			webView.evaluateJavaScript(Injection.spaNavigate(path: path), completionHandler: nil)
 		} else {
-			webView.load(URLRequest(url: URL(string: "https://www.youtube.com/watch?v=\(videoId)")!))
+			webView.load(URLRequest(url: URL(string: "https://www.youtube.com\(path)")!))
 		}
 
 		let session = WatchSession(webView: webView)

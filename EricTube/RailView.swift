@@ -15,6 +15,7 @@ struct RailView: View {
 				Text("Sessions").tag("sessions")
 				Text("Watch").tag("watch")
 				Text("Lists").tag("lists")
+				Text("Import").tag("import")
 			}
 			.pickerStyle(.segmented)
 			.controlSize(.large)
@@ -26,6 +27,8 @@ struct RailView: View {
 				WatchPipelineView(sessions: sessions, store: store)
 			case "lists":
 				ListsView(sessions: sessions, store: store)
+			case "import":
+				ImportView(sessions: sessions)
 			default:
 				sessionList
 			}
