@@ -220,6 +220,33 @@ final class OverlayStore: ObservableObject {
 		persist()
 	}
 
+	// Merge: every video and sub-list of the source moves into the
+	// destination, then the emptied source is removed. For collapsing
+	// redundant lists without moving items one by one.
+	func mergeList(_ sourceId: UUID, into targetId: UUID) {
+		guard sourceId != targetId,
+		      lists.contains(where: { $0.id == sourceId }),
+		      let target = lists.first(where: { $0.id == targetId }) else { return }
+		var cursor: UUID? = target.parentId
+		while let current = cursor {
+			if current == sourceId { return }
+			cursor = lists.first { $0.id == current }?.parentId
+		}
+		for index in videos.indices where videos[index].listIds.contains(sourceId) {
+			videos[index].listIds.removeAll { $0 == sourceId }
+			if !videos[index].listIds.contains(targetId) {
+				videos[index].listIds.append(targetId)
+			}
+		}
+		for index in lists.indices where lists[index].parentId == sourceId {
+			lists[index].parentId = targetId
+			lists[index].genreId = target.genreId
+			propagateGenre(from: lists[index].id, genreId: target.genreId)
+		}
+		lists.removeAll { $0.id == sourceId }
+		persist()
+	}
+
 	func renameList(_ listId: UUID, to name: String) {
 		let trimmed = name.trimmingCharacters(in: .whitespaces)
 		guard !trimmed.isEmpty,

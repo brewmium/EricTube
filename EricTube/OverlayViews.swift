@@ -429,7 +429,7 @@ private struct ListActionsPopover: View {
 	let onAddedChild: @MainActor () -> Void
 
 	private enum Mode {
-		case menu, addChild, rename, move
+		case menu, addChild, rename, move, merge
 	}
 
 	@State private var mode: Mode = .menu
@@ -449,6 +449,9 @@ private struct ListActionsPopover: View {
 				}
 				actionRow(icon: "arrow.turn.down.right", label: "Move to...", color: .primary) {
 					mode = .move
+				}
+				actionRow(icon: "arrow.triangle.merge", label: "Merge into...", color: .primary) {
+					mode = .merge
 				}
 				Divider()
 					.padding(.vertical, 2)
@@ -480,6 +483,13 @@ private struct ListActionsPopover: View {
 					store.moveList(list.id, toGenre: genreId)
 				case .list(let parentId):
 					store.nestList(list.id, under: parentId)
+				}
+				isPresented = false
+			}
+		case .merge:
+			ListPickerView(store: store, excludeListId: list.id, allowGenrePick: false) { destination in
+				if case .list(let targetId) = destination {
+					store.mergeList(list.id, into: targetId)
 				}
 				isPresented = false
 			}
