@@ -1,52 +1,43 @@
 import SwiftUI
 
-// The per-video action palette, anchored at the click point.
+// The per-video action palette, anchored at the click point. "Add to list"
+// swaps in the hierarchy picker in place.
 struct PaletteView: View {
 	@ObservedObject var sessions: WebSessionManager
 	@ObservedObject var store: OverlayStore
 	let request: PaletteRequest
+	@State private var picking = false
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: 2) {
-			PaletteRow(icon: "play.rectangle.on.rectangle", label: "Open as tab") {
-				sessions.openWatchTab(videoId: request.videoId)
+		if picking {
+			ListPickerView(store: store, allowGenrePick: false) { destination in
+				if case .list(let listId) = destination {
+					store.addToList(request.videoId, listId: listId)
+				}
+				sessions.paletteRequest = nil
 			}
-			Divider()
-				.padding(.vertical, 2)
-			ForEach(Tier.allCases) { tier in
-				PaletteRow(icon: tier.icon, label: tier.displayName) {
-					store.save(videoId: request.videoId, tier: tier)
-					sessions.paletteRequest = nil
+		} else {
+			VStack(alignment: .leading, spacing: 2) {
+				PaletteRow(icon: "play.rectangle.on.rectangle", label: "Open as tab") {
+					sessions.openWatchTab(videoId: request.videoId)
+				}
+				Divider()
+					.padding(.vertical, 2)
+				ForEach(Tier.allCases) { tier in
+					PaletteRow(icon: tier.icon, label: tier.displayName) {
+						store.save(videoId: request.videoId, tier: tier)
+						sessions.paletteRequest = nil
+					}
+				}
+				Divider()
+					.padding(.vertical, 2)
+				PaletteRow(icon: "folder.badge.plus", label: "Add to list...", enabled: !store.lists.isEmpty) {
+					picking = true
 				}
 			}
-			Divider()
-				.padding(.vertical, 2)
-			if store.lists.isEmpty {
-				PaletteRow(icon: "folder", label: "Add to list (make one in Lists)", enabled: false) {}
-			} else {
-				Menu {
-					ForEach(store.lists) { list in
-						Button(list.name) {
-							store.addToList(request.videoId, listId: list.id)
-							sessions.paletteRequest = nil
-						}
-					}
-				} label: {
-					HStack(spacing: 8) {
-						Image(systemName: "folder")
-							.frame(width: 18)
-						Text("Add to list")
-						Spacer(minLength: 0)
-					}
-					.contentShape(Rectangle())
-					.padding(.vertical, 3)
-					.padding(.horizontal, 4)
-				}
-				.menuStyle(.borderlessButton)
-			}
+			.padding(10)
+			.frame(width: 230)
 		}
-		.padding(10)
-		.frame(width: 230)
 	}
 }
 

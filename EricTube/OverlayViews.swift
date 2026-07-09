@@ -286,7 +286,7 @@ struct ListNodeView: View {
 				ListNodeView(sessions: sessions, store: store, list: child, editing: editing)
 			}
 			ForEach(items) { video in
-				SavedVideoRow(sessions: sessions, store: store, video: video)
+				SavedVideoRow(sessions: sessions, store: store, video: video, contextListId: list.id)
 			}
 			if items.isEmpty && children.isEmpty {
 				Text("empty")
@@ -472,26 +472,28 @@ enum MoveDestination {
 }
 
 // The hierarchy picker: the Lists tree as a popover — genres and lists with
-// counts, no videos. Used for list moves now; the successor to the flat
-// "Add to X" menus for videos later.
+// counts, no videos. For list moves genres are pickable destinations; for
+// video adds/moves (allowGenrePick false) they render as plain headers,
+// since videos belong to lists, not genres.
 struct ListPickerView: View {
 	@ObservedObject var store: OverlayStore
-	var excludeListId: UUID?
+	var excludeListId: UUID? = nil
+	var allowGenrePick = true
 	let onPick: @MainActor (MoveDestination) -> Void
 
 	var body: some View {
 		ScrollView {
 			VStack(alignment: .leading, spacing: 1) {
 				ForEach(store.genres.sorted { $0.order < $1.order }) { genre in
-					PickerRow(icon: "square.grid.2x2", name: genre.name, count: nil, depth: 0, emphasized: true) {
-						onPick(.genre(genre.id))
-					}
+					PickerRow(icon: "square.grid.2x2", name: genre.name, count: nil, depth: 0, emphasized: true,
+						action: allowGenrePick ? { onPick(.genre(genre.id)) } : nil)
 					ForEach(store.topLists(inGenre: genre.id)) { list in
 						PickerNode(store: store, list: list, depth: 1, excludeListId: excludeListId, onPick: onPick)
 					}
 				}
-				PickerRow(icon: "tray", name: "Unfiled", count: nil, depth: 0, emphasized: true) {
-					onPick(.genre(nil))
+				if allowGenrePick || !store.unfiledLists.isEmpty {
+					PickerRow(icon: "tray", name: "Unfiled", count: nil, depth: 0, emphasized: true,
+						action: allowGenrePick ? { onPick(.genre(nil)) } : nil)
 				}
 				ForEach(store.unfiledLists) { list in
 					PickerNode(store: store, list: list, depth: 1, excludeListId: excludeListId, onPick: onPick)
@@ -514,9 +516,8 @@ private struct PickerNode: View {
 
 	var body: some View {
 		if list.id != excludeListId {
-			PickerRow(icon: "folder", name: list.name, count: store.inList(list.id).count, depth: depth) {
-				onPick(.list(list.id))
-			}
+			PickerRow(icon: "folder", name: list.name, count: store.inList(list.id).count, depth: depth,
+				action: { onPick(.list(list.id)) })
 			ForEach(store.sublists(of: list.id)) { child in
 				PickerNode(store: store, list: child, depth: depth + 1, excludeListId: excludeListId, onPick: onPick)
 			}
@@ -524,39 +525,46 @@ private struct PickerNode: View {
 	}
 }
 
+// action nil renders a plain, non-clickable header row.
 private struct PickerRow: View {
 	let icon: String
 	let name: String
 	let count: Int?
 	let depth: Int
 	var emphasized = false
-	let action: @MainActor () -> Void
+	let action: (@MainActor () -> Void)?
 	@State private var hovering = false
 
 	var body: some View {
-		Button(action: action) {
-			HStack(spacing: 6) {
-				Image(systemName: icon)
-				Text(name)
-					.lineLimit(1)
-				if let count {
-					Text("\(count)")
-						.foregroundStyle(.tertiary)
-				}
-				Spacer(minLength: 0)
+		let content = HStack(spacing: 6) {
+			Image(systemName: icon)
+			Text(name)
+				.lineLimit(1)
+			if let count {
+				Text("\(count)")
+					.foregroundStyle(.tertiary)
 			}
-			.font(.system(size: 13, weight: emphasized ? .semibold : .regular))
-			.padding(.vertical, 3)
-			.padding(.horizontal, 6)
-			.padding(.leading, CGFloat(depth) * 14)
-			.frame(maxWidth: .infinity, alignment: .leading)
-			.background(
-				RoundedRectangle(cornerRadius: 5)
-					.fill(hovering ? Color.accentColor.opacity(0.2) : Color.clear))
-			.contentShape(Rectangle())
+			Spacer(minLength: 0)
 		}
-		.buttonStyle(.borderless)
-		.onHover { hovering = $0 }
+		.font(.system(size: 13, weight: emphasized ? .semibold : .regular))
+		.padding(.vertical, 3)
+		.padding(.horizontal, 6)
+		.padding(.leading, CGFloat(depth) * 14)
+		.frame(maxWidth: .infinity, alignment: .leading)
+		if let action {
+			Button(action: action) {
+				content
+					.background(
+						RoundedRectangle(cornerRadius: 5)
+							.fill(hovering ? Color.accentColor.opacity(0.2) : Color.clear))
+					.contentShape(Rectangle())
+			}
+			.buttonStyle(.borderless)
+			.onHover { hovering = $0 }
+		} else {
+			content
+				.foregroundStyle(.secondary)
+		}
 	}
 }
 
@@ -601,7 +609,9 @@ struct SavedVideoRow: View {
 	@ObservedObject var sessions: WebSessionManager
 	@ObservedObject var store: OverlayStore
 	let video: SavedVideo
+	var contextListId: UUID? = nil
 	@State private var hovering = false
+	@State private var showingActions = false
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 1) {
@@ -619,52 +629,119 @@ struct SavedVideoRow: View {
 		.padding(.horizontal, 10)
 		.frame(maxWidth: .infinity, alignment: .leading)
 		.contentShape(Rectangle())
-		// The action menu floats over the row's trailing edge on hover
+		// The action button floats over the row's trailing edge on hover
 		// instead of permanently costing the title its width.
 		.overlay(alignment: .trailing) {
-			Menu {
-				Button("Open as tab") {
-					sessions.openWatchTab(videoId: video.videoId)
-				}
-				Divider()
-				ForEach(Tier.allCases) { tier in
-					if video.tier != tier {
-						Button(tier.displayName) {
-							store.setTier(video.videoId, to: tier)
-						}
-					}
-				}
-				if !store.lists.isEmpty {
-					Divider()
-					ForEach(store.lists) { list in
-						if !video.listIds.contains(list.id) {
-							Button("Add to \(list.name)") {
-								store.addToList(video.videoId, listId: list.id)
-							}
-						}
-					}
-				}
-				Divider()
-				Button("Archive") {
-					store.archive(video.videoId)
-				}
+			Button {
+				showingActions = true
 			} label: {
 				Image(systemName: "ellipsis.circle")
 					.font(.system(size: 14))
+					.foregroundStyle(Color.accentColor)
 			}
-			.menuStyle(.borderlessButton)
-			.menuIndicator(.hidden)
+			.buttonStyle(.borderless)
 			.frame(width: 24)
 			.background(
 				RoundedRectangle(cornerRadius: 5)
 					.fill(Color(nsColor: .windowBackgroundColor).opacity(0.92)))
 			.padding(.trailing, 8)
-			.opacity(hovering ? 1 : 0)
-			.allowsHitTesting(hovering)
+			.opacity(hovering || showingActions ? 1 : 0)
+			.allowsHitTesting(hovering || showingActions)
+			.popover(isPresented: $showingActions, arrowEdge: .bottom) {
+				VideoActionsPopover(
+					sessions: sessions, store: store, video: video,
+					contextListId: contextListId, isPresented: $showingActions)
+			}
 		}
 		.onHover { hovering = $0 }
 		.onTapGesture {
 			sessions.openWatchTab(videoId: video.videoId)
 		}
+	}
+}
+
+// The per-video action popover: open, tier moves, add/move to list via the
+// hierarchy picker, archive. Replaces the old flat "Add to X" menus.
+private struct VideoActionsPopover: View {
+	@ObservedObject var sessions: WebSessionManager
+	@ObservedObject var store: OverlayStore
+	let video: SavedVideo
+	let contextListId: UUID?
+	@Binding var isPresented: Bool
+
+	private enum Mode {
+		case menu, addTo, moveTo
+	}
+
+	@State private var mode: Mode = .menu
+
+	var body: some View {
+		switch mode {
+		case .menu:
+			VStack(alignment: .leading, spacing: 2) {
+				actionRow(icon: "play.rectangle.on.rectangle", label: "Open as tab", color: .primary) {
+					sessions.openWatchTab(videoId: video.videoId)
+					isPresented = false
+				}
+				Divider()
+					.padding(.vertical, 2)
+				ForEach(Tier.allCases) { tier in
+					if video.tier != tier {
+						actionRow(icon: tier.icon, label: tier.displayName, color: .primary) {
+							store.setTier(video.videoId, to: tier)
+							isPresented = false
+						}
+					}
+				}
+				Divider()
+					.padding(.vertical, 2)
+				actionRow(icon: "folder.badge.plus", label: "Add to list...", color: .primary) {
+					mode = .addTo
+				}
+				if contextListId != nil {
+					actionRow(icon: "arrow.turn.down.right", label: "Move to list...", color: .primary) {
+						mode = .moveTo
+					}
+				}
+				Divider()
+					.padding(.vertical, 2)
+				actionRow(icon: "archivebox", label: "Archive", color: .primary) {
+					store.archive(video.videoId)
+					isPresented = false
+				}
+			}
+			.padding(10)
+			.frame(width: 220)
+		case .addTo:
+			ListPickerView(store: store, allowGenrePick: false) { destination in
+				if case .list(let listId) = destination {
+					store.addToList(video.videoId, listId: listId)
+				}
+				isPresented = false
+			}
+		case .moveTo:
+			ListPickerView(store: store, allowGenrePick: false) { destination in
+				if case .list(let listId) = destination, let source = contextListId {
+					store.moveVideo(video.videoId, from: source, to: listId)
+				}
+				isPresented = false
+			}
+		}
+	}
+
+	private func actionRow(icon: String, label: String, color: Color, action: @escaping @MainActor () -> Void) -> some View {
+		Button(action: action) {
+			HStack(spacing: 8) {
+				Image(systemName: icon)
+					.frame(width: 18)
+				Text(label)
+				Spacer(minLength: 0)
+			}
+			.foregroundStyle(color)
+			.contentShape(Rectangle())
+			.padding(.vertical, 3)
+			.padding(.horizontal, 4)
+		}
+		.buttonStyle(.borderless)
 	}
 }

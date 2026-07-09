@@ -183,6 +183,17 @@ final class OverlayStore: ObservableObject {
 		persist()
 	}
 
+	// Move = leave the source list, join the target (membership elsewhere
+	// untouched). Add stays additive; multi-membership is a feature.
+	func moveVideo(_ videoId: String, from sourceListId: UUID, to targetListId: UUID) {
+		guard let index = videos.firstIndex(where: { $0.videoId == videoId }) else { return }
+		videos[index].listIds.removeAll { $0 == sourceListId }
+		if !videos[index].listIds.contains(targetListId) {
+			videos[index].listIds.append(targetListId)
+		}
+		persist()
+	}
+
 	func renameList(_ listId: UUID, to name: String) {
 		let trimmed = name.trimmingCharacters(in: .whitespaces)
 		guard !trimmed.isEmpty,
