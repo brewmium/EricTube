@@ -30,9 +30,20 @@ struct TopBar: View {
 			barDivider(28)
 			NavButtons(sessions: sessions)
 				.id(sessions.active)
+			if !sessions.watchSessions.isEmpty {
+				barDivider(28)
+				ScrollView(.horizontal, showsIndicators: false) {
+					HStack(spacing: 8) {
+						ForEach(sessions.watchSessions) { session in
+							TabChip(sessions: sessions, session: session)
+						}
+					}
+				}
+			}
 			Spacer(minLength: 0)
 		}
 		.padding(.leading, 8)
+		.padding(.trailing, 10)
 		.frame(height: 46)
 		.frame(maxWidth: .infinity)
 		.background(Color(nsColor: .windowBackgroundColor))
@@ -69,6 +80,56 @@ struct IconButton: View {
 		}
 		.buttonStyle(.borderless)
 		.help(help)
+	}
+}
+
+// A watch tab up in the top bar, Chrome-style: live title, click to switch,
+// x to close (which parks the web view back into the warm pool).
+struct TabChip: View {
+	@ObservedObject var sessions: WebSessionManager
+	let session: WatchSession
+	@State private var title = "Loading..."
+
+	private var selected: Bool {
+		sessions.active == .watch(session.id)
+	}
+
+	var body: some View {
+		HStack(spacing: 6) {
+			Text(title)
+				.font(.system(size: 14))
+				.lineLimit(1)
+				.truncationMode(.tail)
+			Button {
+				sessions.closeWatchTab(session)
+			} label: {
+				Image(systemName: "xmark")
+					.font(.system(size: 10, weight: .bold))
+			}
+			.buttonStyle(.borderless)
+			.help("Close tab")
+		}
+		.padding(.horizontal, 10)
+		.padding(.vertical, 6)
+		.frame(maxWidth: 180)
+		.background(
+			RoundedRectangle(cornerRadius: 7)
+				.fill(selected ? Color.accentColor.opacity(0.25) : Color.primary.opacity(0.06)))
+		.contentShape(Rectangle())
+		.onTapGesture {
+			sessions.active = .watch(session.id)
+		}
+		.onReceive(session.webView.publisher(for: \.title)) { newTitle in
+			if let newTitle, !newTitle.isEmpty {
+				title = newTitle.strippedYouTubeSuffix
+			}
+		}
+	}
+}
+
+extension String {
+	var strippedYouTubeSuffix: String {
+		hasSuffix(" - YouTube") ? String(dropLast(10)) : self
 	}
 }
 

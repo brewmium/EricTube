@@ -82,9 +82,7 @@ struct WatchTabRow: View {
 			close: { sessions.closeWatchTab(session) })
 		.onReceive(session.webView.publisher(for: \.title)) { newTitle in
 			if let newTitle, !newTitle.isEmpty {
-				title = newTitle.hasSuffix(" - YouTube")
-					? String(newTitle.dropLast(10))
-					: newTitle
+				title = newTitle.strippedYouTubeSuffix
 			}
 		}
 	}
