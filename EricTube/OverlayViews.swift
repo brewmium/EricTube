@@ -276,7 +276,7 @@ struct ListNodeView: View {
 	var editing = false
 	@State private var hovering = false
 	@State private var expanded = false
-	@State private var showingMove = false
+	@State private var showingActions = false
 
 	var body: some View {
 		let items = store.inList(list.id)
@@ -313,9 +313,9 @@ struct ListNodeView: View {
 			Text("\(store.inList(list.id).count)")
 				.foregroundStyle(.tertiary)
 			if editing {
-				editControls
-					.opacity(hovering || showingMove ? 1 : 0)
-					.allowsHitTesting(hovering || showingMove)
+				editButton
+					.opacity(hovering || showingActions ? 1 : 0)
+					.allowsHitTesting(hovering || showingActions)
 			}
 			Spacer(minLength: 0)
 		}
@@ -336,46 +336,133 @@ struct ListNodeView: View {
 		}
 	}
 
-	private var editControls: some View {
-		HStack(spacing: 8) {
-			CreateChildButton(help: "New sub-list under \(list.name)") { name in
-				store.createList(named: name, under: list.id)
+	private var editButton: some View {
+		Button {
+			showingActions = true
+		} label: {
+			Image(systemName: "ellipsis.circle")
+				.foregroundStyle(Color.accentColor)
+		}
+		.buttonStyle(.borderless)
+		.help("List actions")
+		.popover(isPresented: $showingActions, arrowEdge: .bottom) {
+			ListActionsPopover(store: store, list: list, isPresented: $showingActions) {
 				expanded = true
 			}
-			Button {
-				showingMove = true
-			} label: {
-				Image(systemName: "arrow.turn.down.right")
-					.foregroundStyle(Color.accentColor)
-			}
-			.buttonStyle(.borderless)
-			.help("Move to...")
-			.popover(isPresented: $showingMove, arrowEdge: .bottom) {
-				ListPickerView(store: store, excludeListId: list.id) { destination in
-					switch destination {
-					case .genre(let genreId):
-						store.moveList(list.id, toGenre: genreId)
-					case .list(let parentId):
-						store.nestList(list.id, under: parentId)
-					}
-					showingMove = false
-				}
-			}
-			Button {
-				if store.isInDeletedGenre(list) {
-					store.destroyList(list.id)
-				} else {
-					store.deleteList(list.id)
-				}
-			} label: {
-				Image(systemName: store.isInDeletedGenre(list) ? "trash.fill" : "trash")
-					.foregroundStyle(.red)
-			}
-			.buttonStyle(.borderless)
-			.help(store.isInDeletedGenre(list)
-				? "Delete forever (videos not in other lists go too)"
-				: "Delete: empty lists vanish; others move to Deleted")
 		}
+	}
+}
+
+// The single per-list action popover: add child, rename, move (hierarchy
+// picker), delete. Name entry and the picker swap in place of the menu.
+private struct ListActionsPopover: View {
+	@ObservedObject var store: OverlayStore
+	let list: VideoList
+	@Binding var isPresented: Bool
+	let onAddedChild: @MainActor () -> Void
+
+	private enum Mode {
+		case menu, addChild, rename, move
+	}
+
+	@State private var mode: Mode = .menu
+	@State private var text = ""
+
+	var body: some View {
+		switch mode {
+		case .menu:
+			VStack(alignment: .leading, spacing: 2) {
+				actionRow(icon: "plus.circle", label: "Add sub-list", color: .primary) {
+					text = ""
+					mode = .addChild
+				}
+				actionRow(icon: "pencil", label: "Rename", color: .primary) {
+					text = list.name
+					mode = .rename
+				}
+				actionRow(icon: "arrow.turn.down.right", label: "Move to...", color: .primary) {
+					mode = .move
+				}
+				Divider()
+					.padding(.vertical, 2)
+				actionRow(icon: store.isInDeletedGenre(list) ? "trash.fill" : "trash",
+					label: deleteLabel, color: .red) {
+					if store.isInDeletedGenre(list) {
+						store.destroyList(list.id)
+					} else {
+						store.deleteList(list.id)
+					}
+					isPresented = false
+				}
+			}
+			.padding(10)
+			.frame(width: 200)
+		case .addChild:
+			nameEntry(placeholder: "Sub-list name", confirm: "Create") { name in
+				store.createList(named: name, under: list.id)
+				onAddedChild()
+			}
+		case .rename:
+			nameEntry(placeholder: "List name", confirm: "Rename") { name in
+				store.renameList(list.id, to: name)
+			}
+		case .move:
+			ListPickerView(store: store, excludeListId: list.id) { destination in
+				switch destination {
+				case .genre(let genreId):
+					store.moveList(list.id, toGenre: genreId)
+				case .list(let parentId):
+					store.nestList(list.id, under: parentId)
+				}
+				isPresented = false
+			}
+		}
+	}
+
+	private var deleteLabel: String {
+		if store.isInDeletedGenre(list) {
+			return "Delete forever"
+		}
+		return store.inList(list.id).isEmpty && store.sublists(of: list.id).isEmpty
+			? "Delete"
+			: "Move to Deleted"
+	}
+
+	private func actionRow(icon: String, label: String, color: Color, action: @escaping @MainActor () -> Void) -> some View {
+		Button(action: action) {
+			HStack(spacing: 8) {
+				Image(systemName: icon)
+					.frame(width: 18)
+				Text(label)
+				Spacer(minLength: 0)
+			}
+			.foregroundStyle(color)
+			.contentShape(Rectangle())
+			.padding(.vertical, 3)
+			.padding(.horizontal, 4)
+		}
+		.buttonStyle(.borderless)
+	}
+
+	private func nameEntry(placeholder: String, confirm: String, commit: @escaping @MainActor (String) -> Void) -> some View {
+		HStack(spacing: 6) {
+			TextField(placeholder, text: $text)
+				.textFieldStyle(.roundedBorder)
+				.frame(width: 180)
+				.onSubmit { submit(commit) }
+			Button(confirm) {
+				submit(commit)
+			}
+			.disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
+		}
+		.padding(10)
+	}
+
+	private func submit(_ commit: @escaping @MainActor (String) -> Void) {
+		let trimmed = text.trimmingCharacters(in: .whitespaces)
+		guard !trimmed.isEmpty else { return }
+		commit(trimmed)
+		isPresented = false
 	}
 }
 

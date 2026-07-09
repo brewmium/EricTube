@@ -183,6 +183,14 @@ final class OverlayStore: ObservableObject {
 		persist()
 	}
 
+	func renameList(_ listId: UUID, to name: String) {
+		let trimmed = name.trimmingCharacters(in: .whitespaces)
+		guard !trimmed.isEmpty,
+		      let index = lists.firstIndex(where: { $0.id == listId }) else { return }
+		lists[index].name = trimmed
+		persist()
+	}
+
 	// Arrange mode: drop a list on a genre header -> top-level in that
 	// genre; drop on another list -> become its sub-list. Sub-lists always
 	// inherit the parent chain's genre.
