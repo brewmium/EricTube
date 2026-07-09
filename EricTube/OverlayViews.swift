@@ -63,13 +63,13 @@ struct ListsView: View {
 				Button {
 					arranging.toggle()
 				} label: {
-					Image(systemName: arranging
-						? "checkmark.circle.fill"
-						: "arrow.up.and.down.and.arrow.left.and.right")
-						.font(.system(size: 16))
-						.foregroundStyle(arranging ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+					Label(arranging ? "Done" : "Arrange",
+						systemImage: arranging
+							? "checkmark.circle.fill"
+							: "arrow.up.and.down.and.arrow.left.and.right")
 				}
-				.buttonStyle(.borderless)
+				.buttonStyle(.bordered)
+				.tint(arranging ? Color.accentColor : nil)
 				.help(arranging ? "Done arranging" : "Arrange mode: drag lists onto genres or other lists")
 			}
 			.padding(.horizontal, 10)
