@@ -33,20 +33,50 @@ enum Injection {
 		document.documentElement.appendChild(chip);
 		let currentId = null;
 
-		function anchorFor(el) {
-			return el && el.closest ? el.closest('a[href*="/watch?v="]') : null;
+		const LINKS = 'a[href*="/watch?v="], a[href*="/shorts/"]';
+		const THUMB_IMGS = 'a[href*="/watch?v="] img, a[href*="/shorts/"] img';
+
+		function videoIdOf(a) {
+			try {
+				const u = new URL(a.href, location.href);
+				const v = u.searchParams.get('v');
+				if (v) { return v; }
+				const m = u.pathname.match(/\/shorts\/([\w-]+)/);
+				if (m) { return m[1]; }
+			} catch (err) {}
+			return null;
+		}
+
+		// A tile has two watch anchors (thumbnail and text block); anchor
+		// the chip to the thumbnail only, matched by video id so climbing
+		// past the tile can never grab a neighbor's thumb.
+		function thumbRectFor(start, id) {
+			let node = start;
+			for (let i = 0; node && i < 7; i++) {
+				if (node.querySelectorAll) {
+					for (const img of node.querySelectorAll(THUMB_IMGS)) {
+						const link = img.closest('a');
+						if (link && videoIdOf(link) === id) {
+							const r = link.getBoundingClientRect();
+							if (r.width >= 80 && r.height >= 50) { return r; }
+						}
+					}
+				}
+				node = node.parentElement;
+			}
+			return null;
 		}
 
 		document.addEventListener('mouseover', function (e) {
-			const a = anchorFor(e.target);
+			const a = e.target && e.target.closest ? e.target.closest(LINKS) : null;
 			if (a) {
-				let id = null;
-				try {
-					id = new URL(a.href, location.href).searchParams.get('v');
-				} catch (err) {}
-				if (!id) { return; }
-				const r = a.getBoundingClientRect();
-				if (r.width < 100) { return; }
+				const id = videoIdOf(a);
+				const r = id ? thumbRectFor(a, id) : null;
+				if (!id || !r) {
+					chip.style.display = 'none';
+					currentId = null;
+					return;
+				}
 				chip.style.left = (window.scrollX + r.left + 8) + 'px';
 				chip.style.top = (window.scrollY + r.top + 8) + 'px';
 				chip.style.display = 'block';
