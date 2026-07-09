@@ -1,14 +1,33 @@
 import SwiftUI
 
-// Rail segment: the watch pipeline (Axis 2). Three tiers, promote/demote
-// via each row's action menu; clicking a row opens it as a watch tab.
+// Rail segment: the watch pipeline (Axis 2). "Continue" (in-progress
+// history) on top, then the three tiers; clicking a row opens it as a
+// watch tab, resuming at the recorded position.
 struct WatchPipelineView: View {
 	@ObservedObject var sessions: WebSessionManager
 	@ObservedObject var store: OverlayStore
+	@ObservedObject private var progress = ProgressStore.shared
 
 	var body: some View {
 		ScrollView {
 			VStack(alignment: .leading, spacing: 4) {
+				let continuing = progress.inProgress
+				if !continuing.isEmpty {
+					HStack(spacing: 6) {
+						Image(systemName: "memories")
+						Text("Continue")
+						Text("\(continuing.count)")
+							.foregroundStyle(.tertiary)
+						Spacer(minLength: 0)
+					}
+					.font(.system(size: 13, weight: .semibold))
+					.foregroundStyle(.secondary)
+					.padding(.top, 10)
+					.padding(.horizontal, 10)
+					ForEach(continuing) { entry in
+						ContinueRow(sessions: sessions, progress: progress, entry: entry)
+					}
+				}
 				ForEach(Tier.allCases) { tier in
 					let items = store.inTier(tier)
 					HStack(spacing: 6) {
@@ -34,6 +53,41 @@ struct WatchPipelineView: View {
 				}
 			}
 			.padding(.bottom, 10)
+		}
+	}
+}
+
+// A half-watched video: title, progress bar, resume on click, x to dismiss
+// from the list (the record itself is kept).
+struct ContinueRow: View {
+	@ObservedObject var sessions: WebSessionManager
+	@ObservedObject var progress: ProgressStore
+	let entry: WatchProgress
+
+	var body: some View {
+		HStack(alignment: .center, spacing: 6) {
+			VStack(alignment: .leading, spacing: 3) {
+				Text(entry.title)
+					.font(.system(size: 14))
+					.lineLimit(2)
+				ProgressView(value: entry.fraction)
+					.controlSize(.small)
+			}
+			Spacer(minLength: 0)
+			Button {
+				progress.dismiss(entry.videoId)
+			} label: {
+				Image(systemName: "xmark")
+					.font(.system(size: 10, weight: .bold))
+			}
+			.buttonStyle(.borderless)
+			.help("Remove from Continue")
+		}
+		.padding(.vertical, 4)
+		.padding(.horizontal, 10)
+		.contentShape(Rectangle())
+		.onTapGesture {
+			sessions.openWatchTab(videoId: entry.videoId)
 		}
 	}
 }

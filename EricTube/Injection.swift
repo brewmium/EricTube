@@ -197,6 +197,73 @@ enum Injection {
 	})();
 	"""#
 
+	// Reports playback position of the page's main video: every ~5s while
+	// playing, and immediately on play/pause/seek/end/navigation. Feeds the
+	// progress store (in-progress history, resume) and the Now Playing
+	// bridge (headphone / media-key control).
+	static let progressScript = #"""
+	(function () {
+		if (window.__erictubeProgress) { return; }
+		window.__erictubeProgress = true;
+		let lastSent = 0;
+
+		function videoIdHere() {
+			if (location.pathname === '/watch') {
+				return new URLSearchParams(location.search).get('v');
+			}
+			const m = location.pathname.match(/^\/shorts\/([\w-]+)/);
+			return m ? m[1] : null;
+		}
+
+		function report(force) {
+			const v = document.querySelector('video.html5-main-video') || document.querySelector('video');
+			const id = videoIdHere();
+			if (!v || !id) { return; }
+			const now = Date.now();
+			if (!force && now - lastSent < 5000) { return; }
+			lastSent = now;
+			try {
+				window.webkit.messageHandlers.erictube.postMessage({
+					kind: 'progress',
+					videoId: id,
+					title: document.title,
+					seconds: v.currentTime,
+					duration: isFinite(v.duration) ? v.duration : 0,
+					playing: !v.paused && !v.ended,
+					path: location.pathname,
+					sessionKind: window.__erictubeKind || ''
+				});
+			} catch (err) {}
+		}
+
+		document.addEventListener('timeupdate', function (e) {
+			if (e.target instanceof HTMLVideoElement) { report(false); }
+		}, true);
+		['play', 'pause', 'ended', 'seeked'].forEach(function (t) {
+			document.addEventListener(t, function (e) {
+				if (e.target instanceof HTMLVideoElement) { report(true); }
+			}, true);
+		});
+		document.addEventListener('yt-navigate-finish', function () { report(true); });
+	})();
+	"""#
+
+	// Restored tabs load at their saved timestamp but must not blast audio
+	// on launch: pause the first playback attempt, once.
+	static let restorePauseScript = #"""
+	(function () {
+		if (!window.__erictubeRestorePause) { return; }
+		function once(e) {
+			if (e.target instanceof HTMLVideoElement) {
+				e.target.pause();
+				document.removeEventListener('playing', once, true);
+				window.__erictubeRestorePause = false;
+			}
+		}
+		document.addEventListener('playing', once, true);
+	})();
+	"""#
+
 	// Drives YouTube's own SPA router (it intercepts same-origin anchor
 	// clicks), so a warm web view hops to the target like an in-page click
 	// instead of cold-loading the whole site.
