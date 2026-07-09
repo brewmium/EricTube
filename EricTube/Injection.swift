@@ -136,12 +136,12 @@ enum Injection {
 	})();
 	"""#
 
-	// Watch tabs always open in theater mode. YouTube itself persists the
-	// preference in the shared session, so this usually no-ops; it exists
-	// for the times the preference gets lost. Watch-kind views only.
+	// Watch pages always open in theater mode, in every session — master
+	// included. YouTube's own persistence of the preference is unreliable
+	// across cold loads; this enforces it whenever a player appears.
 	static let theaterScript = #"""
 	(function () {
-		if (window.__erictubeTheater || window.__erictubeKind !== 'watch') { return; }
+		if (window.__erictubeTheater) { return; }
 		window.__erictubeTheater = true;
 		function enforce() {
 			if (location.pathname !== '/watch') { return; }

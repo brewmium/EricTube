@@ -51,11 +51,12 @@ final class WebSessionManager: ObservableObject {
 
 	private var restoring = false
 	private var masterStartURL = URL(string: "https://www.youtube.com/")!
+	private var masterRestorePaused = false
 
 	// Home base (CREATION.md sect. 4): created once, never torn down by
 	// SwiftUI view churn, so it never reloads or loses its place.
 	private(set) lazy var masterWebView: WKWebView =
-		makeWebView(kind: "master", url: masterStartURL)
+		makeWebView(kind: "master", url: masterStartURL, restorePaused: masterRestorePaused)
 
 	init() {
 		NowPlayingBridge.shared.configure()
@@ -247,8 +248,10 @@ final class WebSessionManager: ObservableObject {
 		}
 	}
 
-	// Tabs come back at their saved position (t=) but paused — no surprise
-	// audio, no Premium stream steal.
+	// Everything comes back at its saved position (t=) but paused — no
+	// surprise audio, no Premium stream steal. Master and music get the
+	// same treatment as tabs: watching in the master session is the
+	// common case, not an exception.
 	private func restoreSession() {
 		guard let data = UserDefaults.standard.data(forKey: "sessionSnapshot"),
 		      let snapshot = try? JSONDecoder().decode(SessionSnapshot.self, from: data)
@@ -256,24 +259,16 @@ final class WebSessionManager: ObservableObject {
 		restoring = true
 		defer { restoring = false }
 
-		if let master = snapshot.masterURL, let url = URL(string: master) {
-			masterStartURL = url
+		if let master = snapshot.masterURL, let restored = resumeURL(from: master) {
+			masterStartURL = restored.url
+			masterRestorePaused = restored.isWatch
 		}
-		if let music = snapshot.musicURL, let url = URL(string: music) {
-			musicWebView = makeWebView(kind: "music", url: url)
+		if let music = snapshot.musicURL, let restored = resumeURL(from: music) {
+			musicWebView = makeWebView(kind: "music", url: restored.url, restorePaused: restored.isWatch)
 		}
 		for tabURL in snapshot.tabURLs {
-			guard var components = URLComponents(string: tabURL) else { continue }
-			if components.path == "/watch",
-			   let videoId = components.queryItems?.first(where: { $0.name == "v" })?.value,
-			   let seconds = ProgressStore.shared.resumeSeconds(for: videoId) {
-				var items = components.queryItems ?? []
-				items.removeAll { $0.name == "t" }
-				items.append(URLQueryItem(name: "t", value: "\(Int(seconds))s"))
-				components.queryItems = items
-			}
-			guard let url = components.url else { continue }
-			let webView = makeWebView(kind: "watch", url: url, restorePaused: true)
+			guard let restored = resumeURL(from: tabURL) else { continue }
+			let webView = makeWebView(kind: "watch", url: restored.url, restorePaused: true)
 			watchSessions.append(WatchSession(webView: webView))
 		}
 		switch snapshot.active {
@@ -286,6 +281,22 @@ final class WebSessionManager: ObservableObject {
 		default:
 			active = .master
 		}
+	}
+
+	// Rewrites a /watch URL to resume at the recorded position.
+	private func resumeURL(from urlString: String) -> (url: URL, isWatch: Bool)? {
+		guard var components = URLComponents(string: urlString) else { return nil }
+		let isWatch = components.path == "/watch"
+		if isWatch,
+		   let videoId = components.queryItems?.first(where: { $0.name == "v" })?.value,
+		   let seconds = ProgressStore.shared.resumeSeconds(for: videoId) {
+			var items = components.queryItems ?? []
+			items.removeAll { $0.name == "t" }
+			items.append(URLQueryItem(name: "t", value: "\(Int(seconds))s"))
+			components.queryItems = items
+		}
+		guard let url = components.url else { return nil }
+		return (url, isWatch)
 	}
 
 	private func makeWebView(kind: String, url: URL?, restorePaused: Bool = false) -> WKWebView {
