@@ -49,11 +49,20 @@ struct EricTubeApp: App {
 private struct MenuBarContent: View {
 	@Environment(\.openWindow) private var openWindow
 
+	// Which build am I running? Answered from the menu bar, no guessing.
+	private var buildStamp: String {
+		guard let url = Bundle.main.executableURL,
+		      let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+		else { return "unknown" }
+		return date.formatted(date: .abbreviated, time: .shortened)
+	}
+
 	var body: some View {
 		Button("Open EricTube") {
 			openWindow(id: "main")
 			NSApp.activate(ignoringOtherApps: true)
 		}
+		Text("Build \(buildStamp)")
 		Divider()
 		Button("Quit EricTube") {
 			NSApp.terminate(nil)

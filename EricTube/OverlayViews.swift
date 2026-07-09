@@ -312,11 +312,9 @@ struct ListNodeView: View {
 				.lineLimit(1)
 			Text("\(store.inList(list.id).count)")
 				.foregroundStyle(.tertiary)
-			if editing {
-				editButton
-					.opacity(hovering || showingActions ? 1 : 0)
-					.allowsHitTesting(hovering || showingActions)
-			}
+			actionButton
+				.opacity(hovering || showingActions ? 1 : 0)
+				.allowsHitTesting(hovering || showingActions)
 			Spacer(minLength: 0)
 		}
 		.font(.system(size: 14, weight: .medium))
@@ -336,7 +334,9 @@ struct ListNodeView: View {
 		}
 	}
 
-	private var editButton: some View {
+	// Available in both modes — a click is deliberate, unlike a drag, so
+	// only dragging needs the edit-mode gate.
+	private var actionButton: some View {
 		Button {
 			showingActions = true
 		} label: {
@@ -601,21 +601,27 @@ struct SavedVideoRow: View {
 	@ObservedObject var sessions: WebSessionManager
 	@ObservedObject var store: OverlayStore
 	let video: SavedVideo
+	@State private var hovering = false
 
 	var body: some View {
-		HStack(alignment: .top, spacing: 6) {
-			VStack(alignment: .leading, spacing: 1) {
-				Text(video.title)
-					.font(.system(size: 14))
-					.lineLimit(2)
-				if !video.channel.isEmpty {
-					Text(video.channel)
-						.font(.system(size: 11))
-						.foregroundStyle(.secondary)
-						.lineLimit(1)
-				}
+		VStack(alignment: .leading, spacing: 1) {
+			Text(video.title)
+				.font(.system(size: 14))
+				.lineLimit(2)
+			if !video.channel.isEmpty {
+				Text(video.channel)
+					.font(.system(size: 11))
+					.foregroundStyle(.secondary)
+					.lineLimit(1)
 			}
-			Spacer(minLength: 0)
+		}
+		.padding(.vertical, 4)
+		.padding(.horizontal, 10)
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.contentShape(Rectangle())
+		// The action menu floats over the row's trailing edge on hover
+		// instead of permanently costing the title its width.
+		.overlay(alignment: .trailing) {
 			Menu {
 				Button("Open as tab") {
 					sessions.openWatchTab(videoId: video.videoId)
@@ -648,11 +654,15 @@ struct SavedVideoRow: View {
 			}
 			.menuStyle(.borderlessButton)
 			.menuIndicator(.hidden)
-			.frame(width: 22)
+			.frame(width: 24)
+			.background(
+				RoundedRectangle(cornerRadius: 5)
+					.fill(Color(nsColor: .windowBackgroundColor).opacity(0.92)))
+			.padding(.trailing, 8)
+			.opacity(hovering ? 1 : 0)
+			.allowsHitTesting(hovering)
 		}
-		.padding(.vertical, 4)
-		.padding(.horizontal, 10)
-		.contentShape(Rectangle())
+		.onHover { hovering = $0 }
 		.onTapGesture {
 			sessions.openWatchTab(videoId: video.videoId)
 		}
