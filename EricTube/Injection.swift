@@ -32,9 +32,11 @@ enum Injection {
 		});
 		document.documentElement.appendChild(chip);
 		let currentId = null;
+		let currentRect = null;
 
 		const LINKS = 'a[href*="/watch?v="], a[href*="/shorts/"]';
 		const THUMB_IMGS = 'a[href*="/watch?v="] img, a[href*="/shorts/"] img';
+		const TILES = 'ytd-rich-item-renderer, ytd-rich-grid-media, ytd-video-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer, ytd-playlist-video-renderer, ytd-reel-item-renderer, yt-lockup-view-model';
 
 		function videoIdOf(a) {
 			try {
@@ -47,9 +49,9 @@ enum Injection {
 			return null;
 		}
 
-		// A tile has two watch anchors (thumbnail and text block); anchor
-		// the chip to the thumbnail only, matched by video id so climbing
-		// past the tile can never grab a neighbor's thumb.
+		// A tile has two watch anchors (thumbnail and text block); place
+		// the chip on the thumbnail, matched by video id so climbing past
+		// the tile can never grab a neighbor's thumb.
 		function thumbRectFor(start, id) {
 			let node = start;
 			for (let i = 0; node && i < 7; i++) {
@@ -67,25 +69,60 @@ enum Injection {
 			return null;
 		}
 
-		document.addEventListener('mouseover', function (e) {
-			const a = e.target && e.target.closest ? e.target.closest(LINKS) : null;
+		// Anywhere in a video cell counts: a watch anchor directly, or any
+		// element inside a known tile container.
+		function resolve(el) {
+			if (!el || !el.closest) { return null; }
+			const a = el.closest(LINKS);
 			if (a) {
 				const id = videoIdOf(a);
-				const r = id ? thumbRectFor(a, id) : null;
-				if (!id || !r) {
-					chip.style.display = 'none';
-					currentId = null;
+				if (id) { return { id: id, rect: thumbRectFor(a, id) }; }
+			}
+			const tile = el.closest(TILES);
+			if (tile) {
+				for (const link of tile.querySelectorAll(LINKS)) {
+					const id = videoIdOf(link);
+					if (id) { return { id: id, rect: thumbRectFor(link, id) }; }
+				}
+			}
+			return null;
+		}
+
+		function show(id, r) {
+			chip.style.left = (window.scrollX + r.left + 8) + 'px';
+			chip.style.top = (window.scrollY + r.top + 8) + 'px';
+			chip.style.display = 'block';
+			currentId = id;
+			currentRect = r;
+		}
+
+		function hide() {
+			chip.style.display = 'none';
+			currentId = null;
+			currentRect = null;
+		}
+
+		document.addEventListener('mouseover', function (e) {
+			if (e.target === chip || chip.contains(e.target)) { return; }
+			const found = resolve(e.target);
+			if (found && found.rect) {
+				show(found.id, found.rect);
+				return;
+			}
+			// YouTube's inline preview is a global overlay ON TOP of the
+			// thumbnail, outside the tile; hold the chip while the pointer
+			// stays within the claimed area instead of flashing away.
+			if (currentRect) {
+				const pad = 8;
+				if (e.clientX >= currentRect.left - pad && e.clientX <= currentRect.right + pad &&
+				    e.clientY >= currentRect.top - pad && e.clientY <= currentRect.bottom + pad) {
 					return;
 				}
-				chip.style.left = (window.scrollX + r.left + 8) + 'px';
-				chip.style.top = (window.scrollY + r.top + 8) + 'px';
-				chip.style.display = 'block';
-				currentId = id;
-			} else if (e.target !== chip && !chip.contains(e.target)) {
-				chip.style.display = 'none';
-				currentId = null;
 			}
+			hide();
 		}, true);
+
+		window.addEventListener('scroll', hide, true);
 
 		chip.addEventListener('click', function (e) {
 			e.preventDefault();
