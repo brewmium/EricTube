@@ -141,8 +141,7 @@ struct ListsView: View {
 								ListNodeView(sessions: sessions, store: store, list: list, editing: editing)
 							}
 						} label: {
-							GenreDropLabel(store: store, genre: genre, editing: editing) { name in
-								store.createList(named: name, inGenre: genre.id)
+							GenreDropLabel(store: store, genre: genre, editing: editing) {
 								expandedGenres.insert(genre.id)
 							}
 						}
@@ -193,53 +192,15 @@ struct ListsView: View {
 	}
 }
 
-// Hover-revealed (+) that pops a name field and creates a list where it
-// was clicked (top-level in a genre, or as a sub-list).
-private struct CreateChildButton: View {
-	let help: String
-	let create: @MainActor (String) -> Void
-	@State private var showing = false
-	@State private var name = ""
-
-	var body: some View {
-		Button {
-			showing = true
-		} label: {
-			Image(systemName: "plus.circle")
-				.foregroundStyle(Color.accentColor)
-		}
-		.buttonStyle(.borderless)
-		.help(help)
-		.popover(isPresented: $showing, arrowEdge: .bottom) {
-			HStack(spacing: 6) {
-				TextField("Name", text: $name)
-					.textFieldStyle(.roundedBorder)
-					.frame(width: 180)
-					.onSubmit(submit)
-				Button("Create", action: submit)
-					.disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
-			}
-			.padding(10)
-		}
-	}
-
-	private func submit() {
-		let trimmed = name.trimmingCharacters(in: .whitespaces)
-		guard !trimmed.isEmpty else { return }
-		create(trimmed)
-		name = ""
-		showing = false
-	}
-}
-
-// Genre header; in edit mode a drop target for lists and a source of new
-// top-level lists (onCreate also expands the genre so the result is seen).
+// Genre header; a drop target for lists in edit mode, with its own hover
+// gear (add list, rename, delete) in any mode.
 private struct GenreDropLabel: View {
 	@ObservedObject var store: OverlayStore
 	let genre: Genre
 	let editing: Bool
-	let onCreate: @MainActor (String) -> Void
+	let onExpand: @MainActor () -> Void
 	@State private var hovering = false
+	@State private var showingActions = false
 
 	var body: some View {
 		HStack(spacing: 6) {
@@ -247,20 +208,125 @@ private struct GenreDropLabel: View {
 			Text(genre.name)
 			Text("\(store.topLists(inGenre: genre.id).count)")
 				.foregroundStyle(.tertiary)
-			if editing {
-				CreateChildButton(help: "New list in \(genre.name)", create: onCreate)
-					.opacity(hovering ? 1 : 0)
-					.allowsHitTesting(hovering)
+			Button {
+				showingActions = true
+			} label: {
+				Image(systemName: "gearshape")
+					.font(.system(size: 16))
+					.foregroundStyle(Color.accentColor)
+			}
+			.buttonStyle(.borderless)
+			.help("Genre actions")
+			.opacity(hovering || showingActions ? 1 : 0)
+			.allowsHitTesting(hovering || showingActions)
+			.popover(isPresented: $showingActions, arrowEdge: .bottom) {
+				GenreActionsPopover(store: store, genre: genre, isPresented: $showingActions, onAddedList: onExpand)
 			}
 			Spacer(minLength: 0)
 		}
-		.font(.system(size: 15, weight: .semibold))
+		.font(.system(size: 17, weight: .semibold))
 		.frame(maxWidth: .infinity, alignment: .leading)
 		.contentShape(Rectangle())
 		.onHover { hovering = $0 }
 		.listDropTarget(enabled: editing) { listId in
 			store.moveList(listId, toGenre: genre.id)
 		}
+	}
+}
+
+// The per-genre action popover: add list, rename, delete. The Deleted
+// genre only offers add — its name is load-bearing and it can't be removed.
+private struct GenreActionsPopover: View {
+	@ObservedObject var store: OverlayStore
+	let genre: Genre
+	@Binding var isPresented: Bool
+	let onAddedList: @MainActor () -> Void
+
+	private enum Mode {
+		case menu, addList, rename
+	}
+
+	@State private var mode: Mode = .menu
+	@State private var text = ""
+
+	private var isDeletedGenre: Bool {
+		genre.name == OverlayStore.deletedGenreName
+	}
+
+	var body: some View {
+		switch mode {
+		case .menu:
+			VStack(alignment: .leading, spacing: 2) {
+				actionRow(icon: "plus.circle", label: "Add list", color: .primary) {
+					text = ""
+					mode = .addList
+				}
+				if !isDeletedGenre {
+					actionRow(icon: "pencil", label: "Rename", color: .primary) {
+						text = genre.name
+						mode = .rename
+					}
+					Divider()
+						.padding(.vertical, 2)
+					actionRow(icon: "trash", label: deleteLabel, color: .red) {
+						store.deleteGenre(genre.id)
+						isPresented = false
+					}
+				}
+			}
+			.padding(10)
+			.frame(width: 210)
+		case .addList:
+			nameEntry(placeholder: "List name", confirm: "Create") { name in
+				store.createList(named: name, inGenre: genre.id)
+				onAddedList()
+			}
+		case .rename:
+			nameEntry(placeholder: "Genre name", confirm: "Rename") { name in
+				store.renameGenre(genre.id, to: name)
+			}
+		}
+	}
+
+	private var deleteLabel: String {
+		store.topLists(inGenre: genre.id).isEmpty ? "Delete" : "Move lists to Deleted"
+	}
+
+	private func actionRow(icon: String, label: String, color: Color, action: @escaping @MainActor () -> Void) -> some View {
+		Button(action: action) {
+			HStack(spacing: 8) {
+				Image(systemName: icon)
+					.frame(width: 18)
+				Text(label)
+				Spacer(minLength: 0)
+			}
+			.foregroundStyle(color)
+			.contentShape(Rectangle())
+			.padding(.vertical, 3)
+			.padding(.horizontal, 4)
+		}
+		.buttonStyle(.borderless)
+	}
+
+	private func nameEntry(placeholder: String, confirm: String, commit: @escaping @MainActor (String) -> Void) -> some View {
+		HStack(spacing: 6) {
+			TextField(placeholder, text: $text)
+				.textFieldStyle(.roundedBorder)
+				.frame(width: 180)
+				.onSubmit { submit(commit) }
+			Button(confirm) {
+				submit(commit)
+			}
+			.disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
+		}
+		.padding(10)
+	}
+
+	private func submit(_ commit: @escaping @MainActor (String) -> Void) {
+		let trimmed = text.trimmingCharacters(in: .whitespaces)
+		guard !trimmed.isEmpty else { return }
+		commit(trimmed)
+		isPresented = false
 	}
 }
 
@@ -317,7 +383,7 @@ struct ListNodeView: View {
 				.allowsHitTesting(hovering || showingActions)
 			Spacer(minLength: 0)
 		}
-		.font(.system(size: 14, weight: .medium))
+		.font(.system(size: 16, weight: .medium))
 		.frame(maxWidth: .infinity, alignment: .leading)
 		.contentShape(Rectangle())
 		.onHover { hovering = $0 }
@@ -340,7 +406,8 @@ struct ListNodeView: View {
 		Button {
 			showingActions = true
 		} label: {
-			Image(systemName: "ellipsis.circle")
+			Image(systemName: "gearshape")
+				.font(.system(size: 16))
 				.foregroundStyle(Color.accentColor)
 		}
 		.buttonStyle(.borderless)
@@ -640,12 +707,12 @@ struct SavedVideoRow: View {
 			Button {
 				showingActions = true
 			} label: {
-				Image(systemName: "ellipsis.circle")
-					.font(.system(size: 14))
+				Image(systemName: "gearshape")
+					.font(.system(size: 16))
 					.foregroundStyle(Color.accentColor)
 			}
 			.buttonStyle(.borderless)
-			.frame(width: 24)
+			.frame(width: 26)
 			.background(
 				RoundedRectangle(cornerRadius: 5)
 					.fill(Color(nsColor: .windowBackgroundColor).opacity(0.92)))

@@ -194,6 +194,32 @@ final class OverlayStore: ObservableObject {
 		persist()
 	}
 
+	func renameGenre(_ genreId: UUID, to name: String) {
+		let trimmed = name.trimmingCharacters(in: .whitespaces)
+		guard !trimmed.isEmpty,
+		      let index = genres.firstIndex(where: { $0.id == genreId }),
+		      genres[index].name != Self.deletedGenreName else { return }
+		genres[index].name = trimmed
+		persist()
+	}
+
+	// Deleting a genre: empty vanishes; otherwise its lists (structure
+	// intact) move to Deleted and the genre goes away. Deleted itself is
+	// not deletable.
+	func deleteGenre(_ genreId: UUID) {
+		guard let genre = genres.first(where: { $0.id == genreId }),
+		      genre.name != Self.deletedGenreName else { return }
+		let hasLists = lists.contains { $0.genreId == genreId }
+		if hasLists {
+			let deleted = ensureDeletedGenre()
+			for index in lists.indices where lists[index].genreId == genreId {
+				lists[index].genreId = deleted
+			}
+		}
+		genres.removeAll { $0.id == genreId }
+		persist()
+	}
+
 	func renameList(_ listId: UUID, to name: String) {
 		let trimmed = name.trimmingCharacters(in: .whitespaces)
 		guard !trimmed.isEmpty,
