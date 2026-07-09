@@ -123,6 +123,11 @@ enum Injection {
 		}, true);
 
 		window.addEventListener('scroll', hide, true);
+		// A click navigates the page under a motionless mouse — no
+		// mouseover will fire to clear the chip, so navigation must.
+		['yt-navigate-start', 'yt-navigate-finish'].forEach(function (t) {
+			document.addEventListener(t, hide);
+		});
 
 		chip.addEventListener('click', function (e) {
 			e.preventDefault();
