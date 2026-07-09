@@ -41,7 +41,7 @@ struct RailView: View {
 	private var sessionList: some View {
 		VStack(alignment: .leading, spacing: 2) {
 			SessionRow(
-				icon: "house", title: "Master",
+				icon: "house", title: "Home",
 				selected: sessions.active == .master,
 				audible: sessions.isAudible(sessions.masterWebView),
 				select: { sessions.active = .master },

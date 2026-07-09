@@ -45,6 +45,7 @@ struct TopBar: View {
 				barDivider(28)
 				ScrollView(.horizontal, showsIndicators: false) {
 					HStack(spacing: 8) {
+						HomeChip(sessions: sessions)
 						ForEach(sessions.watchSessions) { session in
 							TabChip(sessions: sessions, session: session)
 						}
@@ -91,6 +92,28 @@ struct IconButton: View {
 		}
 		.buttonStyle(.borderless)
 		.help(help)
+	}
+}
+
+// The home (master) session as a compact, uncloseable chip leading the tab
+// strip — opening a tab switches away from home, and this is the way back.
+struct HomeChip: View {
+	@ObservedObject var sessions: WebSessionManager
+
+	var body: some View {
+		Image(systemName: "house.fill")
+			.font(.system(size: 14))
+			.foregroundStyle(sessions.active == .master ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+			.padding(.horizontal, 10)
+			.padding(.vertical, 6)
+			.background(
+				RoundedRectangle(cornerRadius: 7)
+					.fill(sessions.active == .master ? Color.accentColor.opacity(0.25) : Color.primary.opacity(0.06)))
+			.contentShape(Rectangle())
+			.onTapGesture {
+				sessions.active = .master
+			}
+			.help("Home (master session)")
 	}
 }
 

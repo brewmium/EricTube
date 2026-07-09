@@ -39,14 +39,14 @@ struct WatchPipelineView: View {
 }
 
 // Rail segment: the library (Axis 1) as genre -> list -> sub-list tree.
-// Arrange mode is an explicit toggle: only then do lists drag, so normal
-// browsing can't accidentally rearrange the tree. Item dragging between
-// lists is a later, separate decision.
+// Edit mode is an explicit toggle: only then do lists drag and grow their
+// hover (+) affordances, so normal browsing can't accidentally rearrange
+// the tree. Item dragging between lists is a later, separate decision.
 struct ListsView: View {
 	@ObservedObject var sessions: WebSessionManager
 	@ObservedObject var store: OverlayStore
 	@State private var newListName = ""
-	@State private var arranging = false
+	@State private var editing = false
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 4) {
@@ -61,21 +61,19 @@ struct ListsView: View {
 				.buttonStyle(.borderless)
 				.disabled(newListName.trimmingCharacters(in: .whitespaces).isEmpty)
 				Button {
-					arranging.toggle()
+					editing.toggle()
 				} label: {
-					Label(arranging ? "Done" : "Arrange",
-						systemImage: arranging
-							? "checkmark.circle.fill"
-							: "arrow.up.and.down.and.arrow.left.and.right")
+					Label(editing ? "Done" : "Edit",
+						systemImage: editing ? "checkmark.circle.fill" : "pencil")
 				}
 				.buttonStyle(.bordered)
-				.tint(arranging ? Color.accentColor : nil)
-				.help(arranging ? "Done arranging" : "Arrange mode: drag lists onto genres or other lists")
+				.tint(editing ? Color.accentColor : nil)
+				.help(editing ? "Done editing" : "Edit mode: drag to rearrange, hover for (+) sub-list")
 			}
 			.padding(.horizontal, 10)
 			.padding(.top, 10)
-			if arranging {
-				Text("drag a list onto a genre or another list")
+			if editing {
+				Text("drag lists to move or nest; hover a row for (+)")
 					.font(.system(size: 11))
 					.foregroundStyle(.secondary)
 					.padding(.leading, 12)
@@ -85,24 +83,24 @@ struct ListsView: View {
 					ForEach(store.genres.sorted { $0.order < $1.order }) { genre in
 						DisclosureGroup {
 							ForEach(store.topLists(inGenre: genre.id)) { list in
-								ListNodeView(sessions: sessions, store: store, list: list, arranging: arranging)
+								ListNodeView(sessions: sessions, store: store, list: list, editing: editing)
 							}
 						} label: {
-							GenreDropLabel(store: store, genre: genre, arranging: arranging)
+							GenreDropLabel(store: store, genre: genre, editing: editing)
 						}
 						.padding(.horizontal, 10)
 					}
-					if !store.unfiledLists.isEmpty || arranging {
+					if !store.unfiledLists.isEmpty || editing {
 						Text("Unfiled")
 							.font(.system(size: 12, weight: .semibold))
 							.foregroundStyle(.secondary)
 							.padding(.leading, 12)
 							.padding(.top, 8)
-							.listDropTarget(enabled: arranging) { listId in
+							.listDropTarget(enabled: editing) { listId in
 								store.moveList(listId, toGenre: nil)
 							}
 						ForEach(store.unfiledLists) { list in
-							ListNodeView(sessions: sessions, store: store, list: list, arranging: arranging)
+							ListNodeView(sessions: sessions, store: store, list: list, editing: editing)
 								.padding(.horizontal, 10)
 						}
 					}
@@ -125,11 +123,52 @@ struct ListsView: View {
 	}
 }
 
-// Genre header; a drop target for lists while arranging.
+// Hover-revealed (+) that pops a name field and creates a list where it
+// was clicked (top-level in a genre, or as a sub-list).
+private struct CreateChildButton: View {
+	let help: String
+	let create: @MainActor (String) -> Void
+	@State private var showing = false
+	@State private var name = ""
+
+	var body: some View {
+		Button {
+			showing = true
+		} label: {
+			Image(systemName: "plus.circle")
+				.foregroundStyle(Color.accentColor)
+		}
+		.buttonStyle(.borderless)
+		.help(help)
+		.popover(isPresented: $showing, arrowEdge: .bottom) {
+			HStack(spacing: 6) {
+				TextField("Name", text: $name)
+					.textFieldStyle(.roundedBorder)
+					.frame(width: 180)
+					.onSubmit(submit)
+				Button("Create", action: submit)
+					.disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+			}
+			.padding(10)
+		}
+	}
+
+	private func submit() {
+		let trimmed = name.trimmingCharacters(in: .whitespaces)
+		guard !trimmed.isEmpty else { return }
+		create(trimmed)
+		name = ""
+		showing = false
+	}
+}
+
+// Genre header; in edit mode a drop target for lists and a source of new
+// top-level lists.
 private struct GenreDropLabel: View {
 	@ObservedObject var store: OverlayStore
 	let genre: Genre
-	let arranging: Bool
+	let editing: Bool
+	@State private var hovering = false
 
 	var body: some View {
 		HStack(spacing: 6) {
@@ -137,28 +176,36 @@ private struct GenreDropLabel: View {
 			Text(genre.name)
 			Text("\(store.topLists(inGenre: genre.id).count)")
 				.foregroundStyle(.tertiary)
+			if editing && hovering {
+				CreateChildButton(help: "New list in \(genre.name)") { name in
+					store.createList(named: name, inGenre: genre.id)
+				}
+			}
 		}
 		.font(.system(size: 15, weight: .semibold))
-		.listDropTarget(enabled: arranging) { listId in
+		.onHover { hovering = $0 }
+		.listDropTarget(enabled: editing) { listId in
 			store.moveList(listId, toGenre: genre.id)
 		}
 	}
 }
 
-// One list in the tree, recursing into sub-lists. In arrange mode the row
-// grows a grip, becomes draggable, and accepts drops (nesting).
+// One list in the tree, recursing into sub-lists. In edit mode the row
+// grows a grip and a hover (+), becomes draggable, and accepts drops
+// (nesting) — top-level lists nest under other lists the same way.
 struct ListNodeView: View {
 	@ObservedObject var sessions: WebSessionManager
 	@ObservedObject var store: OverlayStore
 	let list: VideoList
-	var arranging = false
+	var editing = false
+	@State private var hovering = false
 
 	var body: some View {
 		let items = store.inList(list.id)
 		let children = store.sublists(of: list.id)
 		DisclosureGroup {
 			ForEach(children) { child in
-				ListNodeView(sessions: sessions, store: store, list: child, arranging: arranging)
+				ListNodeView(sessions: sessions, store: store, list: child, editing: editing)
 			}
 			ForEach(items) { video in
 				SavedVideoRow(sessions: sessions, store: store, video: video)
@@ -178,7 +225,7 @@ struct ListNodeView: View {
 	@ViewBuilder
 	private var label: some View {
 		let base = HStack(spacing: 6) {
-			if arranging {
+			if editing {
 				Image(systemName: "line.3.horizontal")
 					.foregroundStyle(.tertiary)
 			}
@@ -187,9 +234,15 @@ struct ListNodeView: View {
 				.lineLimit(1)
 			Text("\(store.inList(list.id).count)")
 				.foregroundStyle(.tertiary)
+			if editing && hovering {
+				CreateChildButton(help: "New sub-list under \(list.name)") { name in
+					store.createList(named: name, under: list.id)
+				}
+			}
 		}
 		.font(.system(size: 14, weight: .medium))
-		if arranging {
+		.onHover { hovering = $0 }
+		if editing {
 			base
 				.onDrag {
 					NSItemProvider(object: list.id.uuidString as NSString)

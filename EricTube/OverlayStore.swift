@@ -170,10 +170,16 @@ final class OverlayStore: ObservableObject {
 		persist()
 	}
 
-	func createList(named name: String) {
+	// parentId wins over genreId: a sub-list always inherits its parent
+	// chain's genre.
+	func createList(named name: String, inGenre genreId: UUID? = nil, under parentId: UUID? = nil) {
 		let trimmed = name.trimmingCharacters(in: .whitespaces)
 		guard !trimmed.isEmpty else { return }
-		lists.append(VideoList(id: UUID(), name: trimmed, genreId: nil, parentId: nil, youtubePlaylistId: nil))
+		var genre = genreId
+		if let parentId {
+			genre = lists.first { $0.id == parentId }?.genreId
+		}
+		lists.append(VideoList(id: UUID(), name: trimmed, genreId: genre, parentId: parentId, youtubePlaylistId: nil))
 		persist()
 	}
 
