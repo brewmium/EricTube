@@ -39,10 +39,14 @@ struct WatchPipelineView: View {
 }
 
 // Rail segment: the library (Axis 1) as genre -> list -> sub-list tree.
+// Arrange mode is an explicit toggle: only then do lists drag, so normal
+// browsing can't accidentally rearrange the tree. Item dragging between
+// lists is a later, separate decision.
 struct ListsView: View {
 	@ObservedObject var sessions: WebSessionManager
 	@ObservedObject var store: OverlayStore
 	@State private var newListName = ""
+	@State private var arranging = false
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 4) {
@@ -56,35 +60,49 @@ struct ListsView: View {
 				}
 				.buttonStyle(.borderless)
 				.disabled(newListName.trimmingCharacters(in: .whitespaces).isEmpty)
+				Button {
+					arranging.toggle()
+				} label: {
+					Image(systemName: arranging
+						? "checkmark.circle.fill"
+						: "arrow.up.and.down.and.arrow.left.and.right")
+						.font(.system(size: 16))
+						.foregroundStyle(arranging ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+				}
+				.buttonStyle(.borderless)
+				.help(arranging ? "Done arranging" : "Arrange mode: drag lists onto genres or other lists")
 			}
 			.padding(.horizontal, 10)
 			.padding(.top, 10)
+			if arranging {
+				Text("drag a list onto a genre or another list")
+					.font(.system(size: 11))
+					.foregroundStyle(.secondary)
+					.padding(.leading, 12)
+			}
 			ScrollView {
 				VStack(alignment: .leading, spacing: 2) {
 					ForEach(store.genres.sorted { $0.order < $1.order }) { genre in
 						DisclosureGroup {
 							ForEach(store.topLists(inGenre: genre.id)) { list in
-								ListNodeView(sessions: sessions, store: store, list: list)
+								ListNodeView(sessions: sessions, store: store, list: list, arranging: arranging)
 							}
 						} label: {
-							HStack(spacing: 6) {
-								Image(systemName: "square.grid.2x2")
-								Text(genre.name)
-								Text("\(store.topLists(inGenre: genre.id).count)")
-									.foregroundStyle(.tertiary)
-							}
-							.font(.system(size: 15, weight: .semibold))
+							GenreDropLabel(store: store, genre: genre, arranging: arranging)
 						}
 						.padding(.horizontal, 10)
 					}
-					if !store.unfiledLists.isEmpty {
+					if !store.unfiledLists.isEmpty || arranging {
 						Text("Unfiled")
 							.font(.system(size: 12, weight: .semibold))
 							.foregroundStyle(.secondary)
 							.padding(.leading, 12)
 							.padding(.top, 8)
+							.listDropTarget(enabled: arranging) { listId in
+								store.moveList(listId, toGenre: nil)
+							}
 						ForEach(store.unfiledLists) { list in
-							ListNodeView(sessions: sessions, store: store, list: list)
+							ListNodeView(sessions: sessions, store: store, list: list, arranging: arranging)
 								.padding(.horizontal, 10)
 						}
 					}
@@ -107,18 +125,40 @@ struct ListsView: View {
 	}
 }
 
-// One list in the tree, recursing into sub-lists.
+// Genre header; a drop target for lists while arranging.
+private struct GenreDropLabel: View {
+	@ObservedObject var store: OverlayStore
+	let genre: Genre
+	let arranging: Bool
+
+	var body: some View {
+		HStack(spacing: 6) {
+			Image(systemName: "square.grid.2x2")
+			Text(genre.name)
+			Text("\(store.topLists(inGenre: genre.id).count)")
+				.foregroundStyle(.tertiary)
+		}
+		.font(.system(size: 15, weight: .semibold))
+		.listDropTarget(enabled: arranging) { listId in
+			store.moveList(listId, toGenre: genre.id)
+		}
+	}
+}
+
+// One list in the tree, recursing into sub-lists. In arrange mode the row
+// grows a grip, becomes draggable, and accepts drops (nesting).
 struct ListNodeView: View {
 	@ObservedObject var sessions: WebSessionManager
 	@ObservedObject var store: OverlayStore
 	let list: VideoList
+	var arranging = false
 
 	var body: some View {
 		let items = store.inList(list.id)
 		let children = store.sublists(of: list.id)
 		DisclosureGroup {
 			ForEach(children) { child in
-				ListNodeView(sessions: sessions, store: store, list: child)
+				ListNodeView(sessions: sessions, store: store, list: child, arranging: arranging)
 			}
 			ForEach(items) { video in
 				SavedVideoRow(sessions: sessions, store: store, video: video)
@@ -130,16 +170,73 @@ struct ListNodeView: View {
 					.padding(.leading, 12)
 			}
 		} label: {
-			HStack(spacing: 6) {
-				Image(systemName: "folder")
-				Text(list.name)
-					.lineLimit(1)
-				Text("\(items.count)")
-					.foregroundStyle(.tertiary)
-			}
-			.font(.system(size: 14, weight: .medium))
+			label
 		}
 		.padding(.leading, 8)
+	}
+
+	@ViewBuilder
+	private var label: some View {
+		let base = HStack(spacing: 6) {
+			if arranging {
+				Image(systemName: "line.3.horizontal")
+					.foregroundStyle(.tertiary)
+			}
+			Image(systemName: "folder")
+			Text(list.name)
+				.lineLimit(1)
+			Text("\(store.inList(list.id).count)")
+				.foregroundStyle(.tertiary)
+		}
+		.font(.system(size: 14, weight: .medium))
+		if arranging {
+			base
+				.onDrag {
+					NSItemProvider(object: list.id.uuidString as NSString)
+				}
+				.listDropTarget(enabled: true) { draggedId in
+					store.nestList(draggedId, under: list.id)
+				}
+		} else {
+			base
+		}
+	}
+}
+
+// Shared drop-target behavior: accepts a dragged list id (plain text),
+// highlights while hovered, hands the UUID to the action on main.
+private struct ListDropTarget: ViewModifier {
+	let enabled: Bool
+	let action: @MainActor (UUID) -> Void
+	@State private var hovering = false
+
+	func body(content: Content) -> some View {
+		if enabled {
+			content
+				.padding(.vertical, 2)
+				.background(
+					RoundedRectangle(cornerRadius: 5)
+						.fill(hovering ? Color.accentColor.opacity(0.25) : Color.clear))
+				.onDrop(of: [.plainText], isTargeted: $hovering) { providers in
+					guard let provider = providers.first else { return false }
+					_ = provider.loadObject(ofClass: NSString.self) { object, _ in
+						guard let string = object as? String,
+						      let id = UUID(uuidString: string) else { return }
+						Task { @MainActor in
+							action(id)
+						}
+					}
+					return true
+				}
+		} else {
+			content
+		}
+	}
+}
+
+private extension View {
+	func listDropTarget(enabled: Bool, action: @escaping @MainActor (UUID) -> Void) -> some View {
+		modifier(ListDropTarget(enabled: enabled, action: action))
 	}
 }
 

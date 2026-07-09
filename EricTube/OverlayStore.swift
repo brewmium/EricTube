@@ -177,6 +177,39 @@ final class OverlayStore: ObservableObject {
 		persist()
 	}
 
+	// Arrange mode: drop a list on a genre header -> top-level in that
+	// genre; drop on another list -> become its sub-list. Sub-lists always
+	// inherit the parent chain's genre.
+	func moveList(_ listId: UUID, toGenre genreId: UUID?) {
+		guard let index = lists.firstIndex(where: { $0.id == listId }) else { return }
+		lists[index].genreId = genreId
+		lists[index].parentId = nil
+		propagateGenre(from: listId, genreId: genreId)
+		persist()
+	}
+
+	func nestList(_ listId: UUID, under parentId: UUID) {
+		guard listId != parentId,
+		      let parentIndex = lists.firstIndex(where: { $0.id == parentId }),
+		      let index = lists.firstIndex(where: { $0.id == listId }) else { return }
+		var cursor: UUID? = parentId
+		while let current = cursor {
+			if current == listId { return }
+			cursor = lists.first { $0.id == current }?.parentId
+		}
+		lists[index].parentId = parentId
+		lists[index].genreId = lists[parentIndex].genreId
+		propagateGenre(from: listId, genreId: lists[parentIndex].genreId)
+		persist()
+	}
+
+	private func propagateGenre(from listId: UUID, genreId: UUID?) {
+		for index in lists.indices where lists[index].parentId == listId {
+			lists[index].genreId = genreId
+			propagateGenre(from: lists[index].id, genreId: genreId)
+		}
+	}
+
 	private func persist() {
 		let encoder = JSONEncoder()
 		encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
