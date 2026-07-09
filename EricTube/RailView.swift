@@ -1,18 +1,56 @@
 import SwiftUI
 import WebKit
 
-// The sessions column: Master pinned, watch tabs below. Segments
-// (Subscriptions / Library) land in later phases.
+// The left menu. Its own tab bar on top switches top-level lists: Sessions
+// (what's live now), Watch (the pipeline), Lists (the library). Width is
+// owned by ContentView (user-resizable).
 struct RailView: View {
 	@ObservedObject var sessions: WebSessionManager
+	@ObservedObject var store: OverlayStore
+	@AppStorage("railSegment") private var segment = "sessions"
 
 	var body: some View {
+		VStack(spacing: 0) {
+			Picker("", selection: $segment) {
+				Text("Sessions").tag("sessions")
+				Text("Watch").tag("watch")
+				Text("Lists").tag("lists")
+			}
+			.pickerStyle(.segmented)
+			.controlSize(.large)
+			.labelsHidden()
+			.padding(.horizontal, 8)
+			.padding(.top, 8)
+			switch segment {
+			case "watch":
+				WatchPipelineView(sessions: sessions, store: store)
+			case "lists":
+				ListsView(sessions: sessions, store: store)
+			default:
+				sessionList
+			}
+			Spacer(minLength: 0)
+		}
+		.frame(maxHeight: .infinity, alignment: .top)
+		.background(Color(nsColor: .windowBackgroundColor))
+	}
+
+	private var sessionList: some View {
 		VStack(alignment: .leading, spacing: 2) {
 			SessionRow(
 				icon: "house", title: "Master",
 				selected: sessions.active == .master,
+				audible: sessions.isAudible(sessions.masterWebView),
 				select: { sessions.active = .master },
 				close: nil)
+			if sessions.musicWebView != nil {
+				SessionRow(
+					icon: "music.note", title: "Music",
+					selected: sessions.active == .music,
+					audible: sessions.isAudible(sessions.musicWebView),
+					select: { sessions.showMusic() },
+					close: nil)
+			}
 			ForEach(sessions.watchSessions) { session in
 				WatchTabRow(sessions: sessions, session: session)
 			}
@@ -23,13 +61,9 @@ struct RailView: View {
 					.padding(.leading, 10)
 					.padding(.top, 4)
 			}
-			Spacer(minLength: 0)
 		}
 		.padding(.horizontal, 8)
 		.padding(.top, 8)
-		.frame(width: 280)
-		.frame(maxHeight: .infinity, alignment: .top)
-		.background(Color(nsColor: .windowBackgroundColor))
 	}
 }
 
@@ -37,6 +71,7 @@ struct SessionRow: View {
 	let icon: String
 	let title: String
 	let selected: Bool
+	var audible = false
 	let select: () -> Void
 	let close: (() -> Void)?
 
@@ -47,6 +82,11 @@ struct SessionRow: View {
 			Text(title)
 				.lineLimit(1)
 				.truncationMode(.tail)
+			if audible {
+				Image(systemName: "speaker.wave.2.fill")
+					.font(.system(size: 12))
+					.foregroundStyle(Color.accentColor)
+			}
 			Spacer(minLength: 0)
 			if let close {
 				Button(action: close) {
@@ -78,6 +118,7 @@ struct WatchTabRow: View {
 		SessionRow(
 			icon: "play.rectangle", title: title,
 			selected: sessions.active == .watch(session.id),
+			audible: sessions.isAudible(session.webView),
 			select: { sessions.active = .watch(session.id) },
 			close: { sessions.closeWatchTab(session) })
 		.onReceive(session.webView.publisher(for: \.title)) { newTitle in

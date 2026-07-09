@@ -8,22 +8,33 @@ import WebKit
 struct TopBar: View {
 	@ObservedObject var sessions: WebSessionManager
 	@AppStorage("railCollapsed") private var collapsed = false
+	@AppStorage("railSegment") private var segment = "sessions"
 
 	var body: some View {
 		HStack(spacing: 16) {
 			Spacer()
 				.frame(width: 54)
 			IconButton(collapsed ? "sidebar.right" : "sidebar.left",
-				help: collapsed ? "Show sessions" : "Hide sessions") {
+				help: collapsed ? "Show side menu" : "Hide side menu") {
 				collapsed.toggle()
 			}
 			barDivider(22)
-			IconButton("text.badge.star", help: "Current watch list (Phase 4)") {}
-				.disabled(true)
+			IconButton("text.badge.star", help: "Watch pipeline") {
+				collapsed = false
+				segment = "watch"
+			}
 			IconButton("star", help: "Favorite video lists (Phase 3)") {}
 				.disabled(true)
 			IconButton("music.note", help: "Music", active: sessions.active == .music) {
 				sessions.showMusic()
+			}
+			.overlay(alignment: .topTrailing) {
+				if sessions.isAudible(sessions.musicWebView) {
+					Image(systemName: "speaker.wave.2.fill")
+						.font(.system(size: 9))
+						.foregroundStyle(Color.accentColor)
+						.offset(x: 4, y: -2)
+				}
 			}
 			IconButton("star.square.on.square", help: "Favorite music lists (Phase 3)") {}
 				.disabled(true)
@@ -96,6 +107,11 @@ struct TabChip: View {
 
 	var body: some View {
 		HStack(spacing: 6) {
+			if sessions.isAudible(session.webView) {
+				Image(systemName: "speaker.wave.2.fill")
+					.font(.system(size: 11))
+					.foregroundStyle(Color.accentColor)
+			}
 			Text(title)
 				.font(.system(size: 14))
 				.lineLimit(1)
