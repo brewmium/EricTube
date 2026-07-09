@@ -39,9 +39,22 @@ struct SavedVideo: Codable, Identifiable {
 	var id: String { videoId }
 }
 
+// Axis 1 (CREATION.md sect. 5): genre -> list -> sub-list. Sub-lists are
+// lists with a parentId. youtubePlaylistId records provenance for the
+// per-list mirror-back (hybrid model: organize locally, commit to YouTube
+// slowly as lists stabilize).
+struct Genre: Codable, Identifiable {
+	let id: UUID
+	var name: String
+	var order: Int
+}
+
 struct VideoList: Codable, Identifiable {
 	let id: UUID
 	var name: String
+	var genreId: UUID?
+	var parentId: UUID?
+	var youtubePlaylistId: String?
 }
 
 // EricTube's local overlay on top of YouTube's data (CREATION.md sect. 8).
@@ -54,12 +67,14 @@ final class OverlayStore: ObservableObject {
 
 	@Published private(set) var videos: [SavedVideo] = []
 	@Published private(set) var lists: [VideoList] = []
+	@Published private(set) var genres: [Genre] = []
 
 	private let fileURL: URL
 
 	private struct Snapshot: Codable {
 		var videos: [SavedVideo]
 		var lists: [VideoList]
+		var genres: [Genre]?
 	}
 
 	init() {
@@ -74,7 +89,32 @@ final class OverlayStore: ObservableObject {
 		   let snapshot = try? decoder.decode(Snapshot.self, from: data) {
 			videos = snapshot.videos
 			lists = snapshot.lists
+			genres = snapshot.genres ?? []
 		}
+	}
+
+	// External tooling (the import-dissolve script) rewrites overlay.json;
+	// this rereads it without a relaunch.
+	func reload() {
+		let decoder = JSONDecoder()
+		decoder.dateDecodingStrategy = .iso8601
+		guard let data = try? Data(contentsOf: fileURL),
+		      let snapshot = try? decoder.decode(Snapshot.self, from: data) else { return }
+		videos = snapshot.videos
+		lists = snapshot.lists
+		genres = snapshot.genres ?? []
+	}
+
+	func topLists(inGenre genreId: UUID) -> [VideoList] {
+		lists.filter { $0.genreId == genreId && $0.parentId == nil }
+	}
+
+	func sublists(of listId: UUID) -> [VideoList] {
+		lists.filter { $0.parentId == listId }
+	}
+
+	var unfiledLists: [VideoList] {
+		lists.filter { $0.genreId == nil && $0.parentId == nil }
 	}
 
 	func video(for videoId: String) -> SavedVideo? {
@@ -133,7 +173,7 @@ final class OverlayStore: ObservableObject {
 	func createList(named name: String) {
 		let trimmed = name.trimmingCharacters(in: .whitespaces)
 		guard !trimmed.isEmpty else { return }
-		lists.append(VideoList(id: UUID(), name: trimmed))
+		lists.append(VideoList(id: UUID(), name: trimmed, genreId: nil, parentId: nil, youtubePlaylistId: nil))
 		persist()
 	}
 
@@ -141,7 +181,7 @@ final class OverlayStore: ObservableObject {
 		let encoder = JSONEncoder()
 		encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 		encoder.dateEncodingStrategy = .iso8601
-		if let data = try? encoder.encode(Snapshot(videos: videos, lists: lists)) {
+		if let data = try? encoder.encode(Snapshot(videos: videos, lists: lists, genres: genres)) {
 			try? data.write(to: fileURL, options: .atomic)
 		}
 	}

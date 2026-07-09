@@ -38,8 +38,7 @@ struct WatchPipelineView: View {
 	}
 }
 
-// Rail segment: the library lists (Axis 1). Flat lists for now; the
-// genre -> list tree comes with import (CREATION.md sect. 8-9).
+// Rail segment: the library (Axis 1) as genre -> list -> sub-list tree.
 struct ListsView: View {
 	@ObservedObject var sessions: WebSessionManager
 	@ObservedObject var store: OverlayStore
@@ -62,28 +61,32 @@ struct ListsView: View {
 			.padding(.top, 10)
 			ScrollView {
 				VStack(alignment: .leading, spacing: 2) {
-					ForEach(store.lists) { list in
-						let items = store.inList(list.id)
+					ForEach(store.genres.sorted { $0.order < $1.order }) { genre in
 						DisclosureGroup {
-							ForEach(items) { video in
-								SavedVideoRow(sessions: sessions, store: store, video: video)
-							}
-							if items.isEmpty {
-								Text("empty")
-									.font(.system(size: 12))
-									.foregroundStyle(.quaternary)
-									.padding(.leading, 12)
+							ForEach(store.topLists(inGenre: genre.id)) { list in
+								ListNodeView(sessions: sessions, store: store, list: list)
 							}
 						} label: {
 							HStack(spacing: 6) {
-								Image(systemName: "folder")
-								Text(list.name)
-								Text("\(items.count)")
+								Image(systemName: "square.grid.2x2")
+								Text(genre.name)
+								Text("\(store.topLists(inGenre: genre.id).count)")
 									.foregroundStyle(.tertiary)
 							}
-							.font(.system(size: 14, weight: .medium))
+							.font(.system(size: 15, weight: .semibold))
 						}
 						.padding(.horizontal, 10)
+					}
+					if !store.unfiledLists.isEmpty {
+						Text("Unfiled")
+							.font(.system(size: 12, weight: .semibold))
+							.foregroundStyle(.secondary)
+							.padding(.leading, 12)
+							.padding(.top, 8)
+						ForEach(store.unfiledLists) { list in
+							ListNodeView(sessions: sessions, store: store, list: list)
+								.padding(.horizontal, 10)
+						}
 					}
 					if store.lists.isEmpty {
 						Text("no lists yet")
@@ -101,6 +104,42 @@ struct ListsView: View {
 	private func createList() {
 		store.createList(named: newListName)
 		newListName = ""
+	}
+}
+
+// One list in the tree, recursing into sub-lists.
+struct ListNodeView: View {
+	@ObservedObject var sessions: WebSessionManager
+	@ObservedObject var store: OverlayStore
+	let list: VideoList
+
+	var body: some View {
+		let items = store.inList(list.id)
+		let children = store.sublists(of: list.id)
+		DisclosureGroup {
+			ForEach(children) { child in
+				ListNodeView(sessions: sessions, store: store, list: child)
+			}
+			ForEach(items) { video in
+				SavedVideoRow(sessions: sessions, store: store, video: video)
+			}
+			if items.isEmpty && children.isEmpty {
+				Text("empty")
+					.font(.system(size: 12))
+					.foregroundStyle(.quaternary)
+					.padding(.leading, 12)
+			}
+		} label: {
+			HStack(spacing: 6) {
+				Image(systemName: "folder")
+				Text(list.name)
+					.lineLimit(1)
+				Text("\(items.count)")
+					.foregroundStyle(.tertiary)
+			}
+			.font(.system(size: 14, weight: .medium))
+		}
+		.padding(.leading, 8)
 	}
 }
 

@@ -34,7 +34,18 @@ enum OAuthError: LocalizedError {
 final class GoogleAuth: ObservableObject {
 	static let shared = GoogleAuth()
 
+	// Full manage scope (read + playlist write) for the hybrid model:
+	// organize locally, mirror lists back to YouTube as they stabilize.
+	static let scope = "https://www.googleapis.com/auth/youtube"
+
 	@Published private(set) var isAuthorized = false
+	@Published private(set) var grantedScope: String?
+
+	// True when tokens predate a scope change (e.g. the readonly grant from
+	// before write access) — the UI offers a re-consent.
+	var needsScopeUpgrade: Bool {
+		isAuthorized && grantedScope != Self.scope
+	}
 
 	private struct Client: Codable {
 		let client_id: String
@@ -51,6 +62,7 @@ final class GoogleAuth: ObservableObject {
 		var accessToken: String
 		var refreshToken: String
 		var expiry: Date
+		var scope: String?
 	}
 
 	private struct TokenResponse: Codable {
@@ -78,6 +90,7 @@ final class GoogleAuth: ObservableObject {
 		   let stored = try? decoder.decode(Tokens.self, from: data) {
 			tokens = stored
 			isAuthorized = true
+			grantedScope = stored.scope
 		}
 	}
 
@@ -121,7 +134,7 @@ final class GoogleAuth: ObservableObject {
 			URLQueryItem(name: "client_id", value: client.client_id),
 			URLQueryItem(name: "redirect_uri", value: redirect),
 			URLQueryItem(name: "response_type", value: "code"),
-			URLQueryItem(name: "scope", value: "https://www.googleapis.com/auth/youtube.readonly"),
+			URLQueryItem(name: "scope", value: Self.scope),
 			URLQueryItem(name: "access_type", value: "offline"),
 			URLQueryItem(name: "prompt", value: "consent"),
 			URLQueryItem(name: "code_challenge", value: challenge),
@@ -169,9 +182,11 @@ final class GoogleAuth: ObservableObject {
 		tokens = Tokens(
 			accessToken: response.access_token,
 			refreshToken: refresh,
-			expiry: Date().addingTimeInterval(response.expires_in - 60))
+			expiry: Date().addingTimeInterval(response.expires_in - 60),
+			scope: Self.scope)
 		persistTokens()
 		isAuthorized = true
+		grantedScope = Self.scope
 	}
 
 	func validAccessToken() async throws -> String {

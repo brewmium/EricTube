@@ -54,6 +54,8 @@ struct ImportView: View {
 		}
 	}
 
+	@State private var upgradeMessage: String?
+
 	private var header: some View {
 		VStack(alignment: .leading, spacing: 6) {
 			if !auth.hasClientSecret {
@@ -68,6 +70,27 @@ struct ImportView: View {
 				}
 				.disabled(importer.isWorking)
 				statusText
+			}
+			if auth.needsScopeUpgrade {
+				HStack(spacing: 8) {
+					Button("Enable write access") {
+						upgradeMessage = nil
+						Task {
+							do {
+								try await GoogleAuth.shared.authorize()
+								upgradeMessage = "write access granted"
+							} catch {
+								upgradeMessage = error.localizedDescription
+							}
+						}
+					}
+					if let upgradeMessage {
+						Text(upgradeMessage)
+							.font(.system(size: 12))
+							.foregroundStyle(.secondary)
+							.lineLimit(2)
+					}
+				}
 			}
 		}
 		.padding(.horizontal, 10)
