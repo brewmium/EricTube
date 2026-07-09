@@ -176,13 +176,18 @@ private struct GenreDropLabel: View {
 			Text(genre.name)
 			Text("\(store.topLists(inGenre: genre.id).count)")
 				.foregroundStyle(.tertiary)
-			if editing && hovering {
+			if editing {
 				CreateChildButton(help: "New list in \(genre.name)") { name in
 					store.createList(named: name, inGenre: genre.id)
 				}
+				.opacity(hovering ? 1 : 0)
+				.allowsHitTesting(hovering)
 			}
+			Spacer(minLength: 0)
 		}
 		.font(.system(size: 15, weight: .semibold))
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.contentShape(Rectangle())
 		.onHover { hovering = $0 }
 		.listDropTarget(enabled: editing) { listId in
 			store.moveList(listId, toGenre: genre.id)
@@ -234,13 +239,18 @@ struct ListNodeView: View {
 				.lineLimit(1)
 			Text("\(store.inList(list.id).count)")
 				.foregroundStyle(.tertiary)
-			if editing && hovering {
+			if editing {
 				CreateChildButton(help: "New sub-list under \(list.name)") { name in
 					store.createList(named: name, under: list.id)
 				}
+				.opacity(hovering ? 1 : 0)
+				.allowsHitTesting(hovering)
 			}
+			Spacer(minLength: 0)
 		}
 		.font(.system(size: 14, weight: .medium))
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.contentShape(Rectangle())
 		.onHover { hovering = $0 }
 		if editing {
 			base

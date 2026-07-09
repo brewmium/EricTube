@@ -25,9 +25,9 @@ struct WindowChrome: NSViewRepresentable {
 			guard !wired, let window else { return }
 			wired = true
 			restoreFrame(of: window)
-			// No title bar to grab; the web view swallows its own mouse
-			// events, so background-drag applies to the rail only.
-			window.isMovableByWindowBackground = true
+			// Deliberately NOT isMovableByWindowBackground: it made the
+			// rail a window-drag surface, which fought list drag-and-drop.
+			// The top bar is the drag handle (WindowDragArea).
 		}
 
 		// Not setFrameUsingName: macOS 26 appends a tilingState JSON blob
@@ -44,6 +44,22 @@ struct WindowChrome: NSViewRepresentable {
 			let frame = NSRect(x: nums[0], y: nums[1], width: nums[2], height: nums[3])
 			guard NSScreen.screens.contains(where: { $0.frame.intersects(frame) }) else { return }
 			window.setFrame(frame, display: false)
+		}
+	}
+}
+
+// The top bar's window-drag surface: empty bar areas drag the window (the
+// bar's buttons and chips sit on top and consume their own clicks).
+struct WindowDragArea: NSViewRepresentable {
+	func makeNSView(context: Context) -> NSView {
+		DragView()
+	}
+
+	func updateNSView(_ nsView: NSView, context: Context) {}
+
+	private final class DragView: NSView {
+		override func mouseDown(with event: NSEvent) {
+			window?.performDrag(with: event)
 		}
 	}
 }

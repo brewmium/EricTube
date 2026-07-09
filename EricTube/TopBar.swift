@@ -59,6 +59,7 @@ struct TopBar: View {
 		.frame(height: 46)
 		.frame(maxWidth: .infinity)
 		.background(Color(nsColor: .windowBackgroundColor))
+		.background(WindowDragArea())
 	}
 
 	private func barDivider(_ height: CGFloat) -> some View {
