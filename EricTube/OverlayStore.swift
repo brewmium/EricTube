@@ -216,6 +216,65 @@ final class OverlayStore: ObservableObject {
 		}
 	}
 
+	// "Deleted" is a special genre pinned to the bottom: deleting a list
+	// moves it there with its subtree and videos grouped intact, to be
+	// picked away at (or rescued) later. Created on first use.
+	static let deletedGenreName = "Deleted"
+
+	func isInDeletedGenre(_ list: VideoList) -> Bool {
+		guard let deleted = genres.first(where: { $0.name == Self.deletedGenreName }) else { return false }
+		return list.genreId == deleted.id
+	}
+
+	private func ensureDeletedGenre() -> UUID {
+		if let existing = genres.first(where: { $0.name == Self.deletedGenreName }) {
+			return existing.id
+		}
+		let genre = Genre(id: UUID(), name: Self.deletedGenreName, order: 9999)
+		genres.append(genre)
+		return genre.id
+	}
+
+	// Edit-mode delete: empty lists just vanish; anything with content moves
+	// (subtree and all) to the Deleted genre. Nothing loses videos here.
+	func deleteList(_ listId: UUID) {
+		guard let index = lists.firstIndex(where: { $0.id == listId }) else { return }
+		if inList(listId).isEmpty && sublists(of: listId).isEmpty {
+			lists.remove(at: index)
+		} else {
+			let deleted = ensureDeletedGenre()
+			lists[index].parentId = nil
+			lists[index].genreId = deleted
+			propagateGenre(from: listId, genreId: deleted)
+		}
+		persist()
+	}
+
+	// Permanent removal (offered only inside Deleted): the subtree goes,
+	// member videos lose those memberships, and records left with no
+	// membership and no tier are dropped.
+	func destroyList(_ listId: UUID) {
+		var doomed: Set<UUID> = []
+		func collect(_ id: UUID) {
+			doomed.insert(id)
+			for child in sublists(of: id) {
+				collect(child.id)
+			}
+		}
+		collect(listId)
+		lists.removeAll { doomed.contains($0.id) }
+		videos = videos.compactMap { video in
+			var video = video
+			let wasMember = video.listIds.contains { doomed.contains($0) }
+			video.listIds.removeAll { doomed.contains($0) }
+			if wasMember && video.listIds.isEmpty && video.tier == nil {
+				return nil
+			}
+			return video
+		}
+		persist()
+	}
+
 	private func persist() {
 		let encoder = JSONEncoder()
 		encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

@@ -47,6 +47,7 @@ struct ListsView: View {
 	@ObservedObject var store: OverlayStore
 	@State private var newListName = ""
 	@State private var editing = false
+	@State private var expandedGenres: Set<UUID> = []
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 4) {
@@ -81,12 +82,15 @@ struct ListsView: View {
 			ScrollView {
 				VStack(alignment: .leading, spacing: 2) {
 					ForEach(store.genres.sorted { $0.order < $1.order }) { genre in
-						DisclosureGroup {
+						DisclosureGroup(isExpanded: genreExpanded(genre.id)) {
 							ForEach(store.topLists(inGenre: genre.id)) { list in
 								ListNodeView(sessions: sessions, store: store, list: list, editing: editing)
 							}
 						} label: {
-							GenreDropLabel(store: store, genre: genre, editing: editing)
+							GenreDropLabel(store: store, genre: genre, editing: editing) { name in
+								store.createList(named: name, inGenre: genre.id)
+								expandedGenres.insert(genre.id)
+							}
 						}
 						.padding(.horizontal, 10)
 					}
@@ -120,6 +124,18 @@ struct ListsView: View {
 	private func createList() {
 		store.createList(named: newListName)
 		newListName = ""
+	}
+
+	private func genreExpanded(_ id: UUID) -> Binding<Bool> {
+		Binding(
+			get: { expandedGenres.contains(id) },
+			set: { open in
+				if open {
+					expandedGenres.insert(id)
+				} else {
+					expandedGenres.remove(id)
+				}
+			})
 	}
 }
 
@@ -163,25 +179,24 @@ private struct CreateChildButton: View {
 }
 
 // Genre header; in edit mode a drop target for lists and a source of new
-// top-level lists.
+// top-level lists (onCreate also expands the genre so the result is seen).
 private struct GenreDropLabel: View {
 	@ObservedObject var store: OverlayStore
 	let genre: Genre
 	let editing: Bool
+	let onCreate: @MainActor (String) -> Void
 	@State private var hovering = false
 
 	var body: some View {
 		HStack(spacing: 6) {
-			Image(systemName: "square.grid.2x2")
+			Image(systemName: genre.name == OverlayStore.deletedGenreName ? "trash" : "square.grid.2x2")
 			Text(genre.name)
 			Text("\(store.topLists(inGenre: genre.id).count)")
 				.foregroundStyle(.tertiary)
 			if editing {
-				CreateChildButton(help: "New list in \(genre.name)") { name in
-					store.createList(named: name, inGenre: genre.id)
-				}
-				.opacity(hovering ? 1 : 0)
-				.allowsHitTesting(hovering)
+				CreateChildButton(help: "New list in \(genre.name)", create: onCreate)
+					.opacity(hovering ? 1 : 0)
+					.allowsHitTesting(hovering)
 			}
 			Spacer(minLength: 0)
 		}
@@ -196,19 +211,23 @@ private struct GenreDropLabel: View {
 }
 
 // One list in the tree, recursing into sub-lists. In edit mode the row
-// grows a grip and a hover (+), becomes draggable, and accepts drops
-// (nesting) — top-level lists nest under other lists the same way.
+// grows a grip and hover controls — (+) sub-list (which expands the row so
+// the child is seen), move-via-picker, delete — becomes draggable, and
+// accepts drops (nesting). Delete moves content-bearing lists to the
+// Deleted genre; inside Deleted the trash deletes forever.
 struct ListNodeView: View {
 	@ObservedObject var sessions: WebSessionManager
 	@ObservedObject var store: OverlayStore
 	let list: VideoList
 	var editing = false
 	@State private var hovering = false
+	@State private var expanded = false
+	@State private var showingMove = false
 
 	var body: some View {
 		let items = store.inList(list.id)
 		let children = store.sublists(of: list.id)
-		DisclosureGroup {
+		DisclosureGroup(isExpanded: $expanded) {
 			ForEach(children) { child in
 				ListNodeView(sessions: sessions, store: store, list: child, editing: editing)
 			}
@@ -240,11 +259,9 @@ struct ListNodeView: View {
 			Text("\(store.inList(list.id).count)")
 				.foregroundStyle(.tertiary)
 			if editing {
-				CreateChildButton(help: "New sub-list under \(list.name)") { name in
-					store.createList(named: name, under: list.id)
-				}
-				.opacity(hovering ? 1 : 0)
-				.allowsHitTesting(hovering)
+				editControls
+					.opacity(hovering || showingMove ? 1 : 0)
+					.allowsHitTesting(hovering || showingMove)
 			}
 			Spacer(minLength: 0)
 		}
@@ -263,6 +280,142 @@ struct ListNodeView: View {
 		} else {
 			base
 		}
+	}
+
+	private var editControls: some View {
+		HStack(spacing: 8) {
+			CreateChildButton(help: "New sub-list under \(list.name)") { name in
+				store.createList(named: name, under: list.id)
+				expanded = true
+			}
+			Button {
+				showingMove = true
+			} label: {
+				Image(systemName: "arrow.turn.down.right")
+					.foregroundStyle(Color.accentColor)
+			}
+			.buttonStyle(.borderless)
+			.help("Move to...")
+			.popover(isPresented: $showingMove, arrowEdge: .bottom) {
+				ListPickerView(store: store, excludeListId: list.id) { destination in
+					switch destination {
+					case .genre(let genreId):
+						store.moveList(list.id, toGenre: genreId)
+					case .list(let parentId):
+						store.nestList(list.id, under: parentId)
+					}
+					showingMove = false
+				}
+			}
+			Button {
+				if store.isInDeletedGenre(list) {
+					store.destroyList(list.id)
+				} else {
+					store.deleteList(list.id)
+				}
+			} label: {
+				Image(systemName: store.isInDeletedGenre(list) ? "trash.fill" : "trash")
+					.foregroundStyle(.red)
+			}
+			.buttonStyle(.borderless)
+			.help(store.isInDeletedGenre(list)
+				? "Delete forever (videos not in other lists go too)"
+				: "Delete: empty lists vanish; others move to Deleted")
+		}
+	}
+}
+
+enum MoveDestination {
+	case genre(UUID?)
+	case list(UUID)
+}
+
+// The hierarchy picker: the Lists tree as a popover — genres and lists with
+// counts, no videos. Used for list moves now; the successor to the flat
+// "Add to X" menus for videos later.
+struct ListPickerView: View {
+	@ObservedObject var store: OverlayStore
+	var excludeListId: UUID?
+	let onPick: @MainActor (MoveDestination) -> Void
+
+	var body: some View {
+		ScrollView {
+			VStack(alignment: .leading, spacing: 1) {
+				ForEach(store.genres.sorted { $0.order < $1.order }) { genre in
+					PickerRow(icon: "square.grid.2x2", name: genre.name, count: nil, depth: 0, emphasized: true) {
+						onPick(.genre(genre.id))
+					}
+					ForEach(store.topLists(inGenre: genre.id)) { list in
+						PickerNode(store: store, list: list, depth: 1, excludeListId: excludeListId, onPick: onPick)
+					}
+				}
+				PickerRow(icon: "tray", name: "Unfiled", count: nil, depth: 0, emphasized: true) {
+					onPick(.genre(nil))
+				}
+				ForEach(store.unfiledLists) { list in
+					PickerNode(store: store, list: list, depth: 1, excludeListId: excludeListId, onPick: onPick)
+				}
+			}
+			.padding(8)
+		}
+		.frame(width: 280, height: 400)
+	}
+}
+
+// Recursive picker rows; the excluded list's whole subtree is omitted (a
+// list can't move into itself).
+private struct PickerNode: View {
+	@ObservedObject var store: OverlayStore
+	let list: VideoList
+	let depth: Int
+	let excludeListId: UUID?
+	let onPick: @MainActor (MoveDestination) -> Void
+
+	var body: some View {
+		if list.id != excludeListId {
+			PickerRow(icon: "folder", name: list.name, count: store.inList(list.id).count, depth: depth) {
+				onPick(.list(list.id))
+			}
+			ForEach(store.sublists(of: list.id)) { child in
+				PickerNode(store: store, list: child, depth: depth + 1, excludeListId: excludeListId, onPick: onPick)
+			}
+		}
+	}
+}
+
+private struct PickerRow: View {
+	let icon: String
+	let name: String
+	let count: Int?
+	let depth: Int
+	var emphasized = false
+	let action: @MainActor () -> Void
+	@State private var hovering = false
+
+	var body: some View {
+		Button(action: action) {
+			HStack(spacing: 6) {
+				Image(systemName: icon)
+				Text(name)
+					.lineLimit(1)
+				if let count {
+					Text("\(count)")
+						.foregroundStyle(.tertiary)
+				}
+				Spacer(minLength: 0)
+			}
+			.font(.system(size: 13, weight: emphasized ? .semibold : .regular))
+			.padding(.vertical, 3)
+			.padding(.horizontal, 6)
+			.padding(.leading, CGFloat(depth) * 14)
+			.frame(maxWidth: .infinity, alignment: .leading)
+			.background(
+				RoundedRectangle(cornerRadius: 5)
+					.fill(hovering ? Color.accentColor.opacity(0.2) : Color.clear))
+			.contentShape(Rectangle())
+		}
+		.buttonStyle(.borderless)
+		.onHover { hovering = $0 }
 	}
 }
 
