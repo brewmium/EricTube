@@ -486,14 +486,14 @@ struct ListPickerView: View {
 			VStack(alignment: .leading, spacing: 1) {
 				ForEach(store.genres.sorted { $0.order < $1.order }) { genre in
 					PickerRow(icon: "square.grid.2x2", name: genre.name, count: nil, depth: 0, emphasized: true,
-						action: allowGenrePick ? { onPick(.genre(genre.id)) } : nil)
+						action: genrePickAction(.genre(genre.id)))
 					ForEach(store.topLists(inGenre: genre.id)) { list in
 						PickerNode(store: store, list: list, depth: 1, excludeListId: excludeListId, onPick: onPick)
 					}
 				}
 				if allowGenrePick || !store.unfiledLists.isEmpty {
 					PickerRow(icon: "tray", name: "Unfiled", count: nil, depth: 0, emphasized: true,
-						action: allowGenrePick ? { onPick(.genre(nil)) } : nil)
+						action: genrePickAction(.genre(nil)))
 				}
 				ForEach(store.unfiledLists) { list in
 					PickerNode(store: store, list: list, depth: 1, excludeListId: excludeListId, onPick: onPick)
@@ -502,6 +502,11 @@ struct ListPickerView: View {
 			.padding(8)
 		}
 		.frame(width: 280, height: 400)
+	}
+
+	private func genrePickAction(_ destination: MoveDestination) -> (@MainActor () -> Void)? {
+		guard allowGenrePick else { return nil }
+		return { onPick(destination) }
 	}
 }
 
