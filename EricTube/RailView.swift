@@ -1,18 +1,17 @@
 import SwiftUI
 import WebKit
 
-// The left menu. Its own tab bar on top switches top-level lists: Sessions
-// (what's live now), Watch (the pipeline), Lists (the library). Width is
-// owned by ContentView (user-resizable).
+// The left menu. Its own tab bar on top switches top-level views: Watch
+// (sessions + continue + the pipeline), Lists (the library), Import. Width
+// is owned by ContentView (user-resizable).
 struct RailView: View {
 	@ObservedObject var sessions: WebSessionManager
 	@ObservedObject var store: OverlayStore
-	@AppStorage("railSegment") private var segment = "sessions"
+	@AppStorage("railSegment") private var segment = "watch"
 
 	var body: some View {
 		VStack(spacing: 0) {
 			Picker("", selection: $segment) {
-				Text("Sessions").tag("sessions")
 				Text("Watch").tag("watch")
 				Text("Lists").tag("lists")
 				Text("Import").tag("import")
@@ -23,50 +22,22 @@ struct RailView: View {
 			.padding(.horizontal, 8)
 			.padding(.top, 8)
 			switch segment {
-			case "watch":
-				WatchPipelineView(sessions: sessions, store: store)
 			case "lists":
 				ListsView(sessions: sessions, store: store)
 			case "import":
 				ImportView(sessions: sessions)
 			default:
-				sessionList
+				WatchPipelineView(sessions: sessions, store: store)
 			}
 			Spacer(minLength: 0)
 		}
 		.frame(maxHeight: .infinity, alignment: .top)
 		.background(Color(nsColor: .windowBackgroundColor))
-	}
-
-	private var sessionList: some View {
-		VStack(alignment: .leading, spacing: 2) {
-			SessionRow(
-				icon: "house", title: "Home",
-				selected: sessions.active == .master,
-				audible: sessions.isAudible(sessions.masterWebView),
-				select: { sessions.active = .master },
-				close: nil)
-			if sessions.musicWebView != nil {
-				SessionRow(
-					icon: "music.note", title: "Music",
-					selected: sessions.active == .music,
-					audible: sessions.isAudible(sessions.musicWebView),
-					select: { sessions.showMusic() },
-					close: nil)
-			}
-			ForEach(sessions.watchSessions) { session in
-				WatchTabRow(sessions: sessions, session: session)
-			}
-			if sessions.watchSessions.isEmpty {
-				Text("watch tabs appear here")
-					.font(.system(size: 13))
-					.foregroundStyle(.quaternary)
-					.padding(.leading, 10)
-					.padding(.top, 4)
+		.onAppear {
+			if segment == "sessions" {
+				segment = "watch"
 			}
 		}
-		.padding(.horizontal, 8)
-		.padding(.top, 8)
 	}
 }
 
@@ -114,22 +85,3 @@ struct SessionRow: View {
 	}
 }
 
-struct WatchTabRow: View {
-	@ObservedObject var sessions: WebSessionManager
-	let session: WatchSession
-	@State private var title = "Loading..."
-
-	var body: some View {
-		SessionRow(
-			icon: "play.rectangle", title: title,
-			selected: sessions.active == .watch(session.id),
-			audible: sessions.isAudible(session.webView),
-			select: { sessions.active = .watch(session.id) },
-			close: { sessions.closeWatchTab(session) })
-		.onReceive(session.webView.publisher(for: \.title)) { newTitle in
-			if let newTitle, !newTitle.isEmpty {
-				title = newTitle.strippedYouTubeSuffix
-			}
-		}
-	}
-}

@@ -4,11 +4,13 @@ import WebKit
 // Full-width top bar, Chrome-style, visible regardless of rail state.
 // Left to right: traffic lights, rail toggle, soft divider, jump-to cluster
 // (watch list, favorite video lists, music, favorite music lists), stronger
-// divider, back/forward. Tight padding, controls sized to be seen.
+// divider, back/forward, background-play toggle, then the active session's
+// URL (read-only, selectable) and the three-dot menu. Session/tab
+// switching lives in the rail's Watch segment.
 struct TopBar: View {
 	@ObservedObject var sessions: WebSessionManager
 	@AppStorage("railCollapsed") private var collapsed = false
-	@AppStorage("railSegment") private var segment = "sessions"
+	@AppStorage("railSegment") private var segment = "watch"
 
 	var body: some View {
 		HStack(spacing: 16) {
@@ -49,18 +51,11 @@ struct TopBar: View {
 				active: sessions.playInBackground) {
 				sessions.playInBackground.toggle()
 			}
-			if !sessions.watchSessions.isEmpty {
-				barDivider(28)
-				ScrollView(.horizontal, showsIndicators: false) {
-					HStack(spacing: 8) {
-						HomeChip(sessions: sessions)
-						ForEach(sessions.watchSessions) { session in
-							TabChip(sessions: sessions, session: session)
-						}
-					}
-				}
-			}
-			Spacer(minLength: 0)
+			barDivider(28)
+			URLDisplay(sessions: sessions)
+				.id(sessions.active)
+				.frame(maxWidth: .infinity, alignment: .leading)
+			BarMenu(sessions: sessions)
 		}
 		.padding(.leading, 8)
 		.padding(.trailing, 10)
@@ -104,76 +99,51 @@ struct IconButton: View {
 	}
 }
 
-// The home (master) session as a compact, uncloseable chip leading the tab
-// strip — opening a tab switches away from home, and this is the way back.
-struct HomeChip: View {
+// The active session's URL: visible and copyable (text selection works),
+// deliberately not editable. .id(sessions.active) at the call site forces
+// a resubscribe when the active session changes.
+struct URLDisplay: View {
 	@ObservedObject var sessions: WebSessionManager
+	@State private var urlString = ""
 
 	var body: some View {
-		Image(systemName: "house.fill")
-			.font(.system(size: 14))
-			.foregroundStyle(sessions.active == .master ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
-			.padding(.horizontal, 10)
-			.padding(.vertical, 6)
-			.background(
-				RoundedRectangle(cornerRadius: 7)
-					.fill(sessions.active == .master ? Color.accentColor.opacity(0.25) : Color.primary.opacity(0.06)))
-			.contentShape(Rectangle())
-			.onTapGesture {
-				sessions.active = .master
+		Text(urlString)
+			.font(.system(size: 13))
+			.foregroundStyle(.secondary)
+			.lineLimit(1)
+			.truncationMode(.middle)
+			.textSelection(.enabled)
+			.help(urlString)
+			.onReceive(sessions.activeWebView.publisher(for: \.url)) { url in
+				urlString = url?.absoluteString ?? ""
 			}
-			.help("Home (master session)")
 	}
 }
 
-// A watch tab up in the top bar, Chrome-style: live title, click to switch,
-// x to close (which parks the web view back into the warm pool).
-struct TabChip: View {
+// Top-bar three-dot menu: page-level utilities for the active session.
+struct BarMenu: View {
 	@ObservedObject var sessions: WebSessionManager
-	let session: WatchSession
-	@State private var title = "Loading..."
-
-	private var selected: Bool {
-		sessions.active == .watch(session.id)
-	}
 
 	var body: some View {
-		HStack(spacing: 6) {
-			if sessions.isAudible(session.webView) {
-				Image(systemName: "speaker.wave.2.fill")
-					.font(.system(size: 11))
-					.foregroundStyle(Color.accentColor)
+		Menu {
+			Button("Copy URL") {
+				guard let url = sessions.activeWebView.url else { return }
+				NSPasteboard.general.clearContents()
+				NSPasteboard.general.setString(url.absoluteString, forType: .string)
 			}
-			Text(title)
-				.font(.system(size: 14))
-				.lineLimit(1)
-				.truncationMode(.tail)
-			Button {
-				sessions.closeWatchTab(session)
-			} label: {
-				Image(systemName: "xmark")
-					.font(.system(size: 10, weight: .bold))
-					.frame(width: 22, height: 22)
-					.contentShape(Rectangle())
+			Button("Open in Browser") {
+				guard let url = sessions.activeWebView.url else { return }
+				NSWorkspace.shared.open(url)
 			}
-			.buttonStyle(.borderless)
-			.help("Close tab")
+		} label: {
+			Image(systemName: "ellipsis")
+				.font(.system(size: 20))
+				.foregroundStyle(Color.primary.opacity(0.85))
+				.frame(width: 30, height: 30)
 		}
-		.padding(.horizontal, 10)
-		.padding(.vertical, 6)
-		.frame(maxWidth: 180)
-		.background(
-			RoundedRectangle(cornerRadius: 7)
-				.fill(selected ? Color.accentColor.opacity(0.25) : Color.primary.opacity(0.06)))
-		.contentShape(Rectangle())
-		.onTapGesture {
-			sessions.active = .watch(session.id)
-		}
-		.onReceive(session.webView.publisher(for: \.title)) { newTitle in
-			if let newTitle, !newTitle.isEmpty {
-				title = newTitle.strippedYouTubeSuffix
-			}
-		}
+		.menuStyle(.borderlessButton)
+		.menuIndicator(.hidden)
+		.frame(width: 34)
 	}
 }
 

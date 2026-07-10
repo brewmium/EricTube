@@ -146,7 +146,7 @@ final class WebSessionManager: ObservableObject {
 		openTab(path: path, activate: activate)
 	}
 
-	private func currentVideoId(of webView: WKWebView) -> String? {
+	func currentVideoId(of webView: WKWebView) -> String? {
 		guard let url = webView.url,
 		      let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
 		      components.path == "/watch" else { return nil }

@@ -1,8 +1,8 @@
 import SwiftUI
 
-// Rail segment: the watch pipeline (Axis 2). "Continue" (in-progress
-// history) on top, then the three tiers; clicking a row opens it as a
-// watch tab, resuming at the recorded position.
+// Rail segment: the whole "watching" world. Live sessions (home, music,
+// open tabs — with progress where started, blank where not) blend with
+// Continue (in-progress videos not currently open), then the three tiers.
 struct WatchPipelineView: View {
 	@ObservedObject var sessions: WebSessionManager
 	@ObservedObject var store: OverlayStore
@@ -11,19 +11,32 @@ struct WatchPipelineView: View {
 	var body: some View {
 		ScrollView {
 			VStack(alignment: .leading, spacing: 4) {
-				let continuing = progress.inProgress
+				sectionHeader(icon: "rectangle.stack.badge.play", title: "Sessions",
+					count: 1 + (sessions.musicWebView == nil ? 0 : 1) + sessions.watchSessions.count)
+				SessionRow(
+					icon: "house", title: "Home",
+					selected: sessions.active == .master,
+					audible: sessions.isAudible(sessions.masterWebView),
+					select: { sessions.active = .master },
+					close: nil)
+					.padding(.horizontal, 8)
+				if sessions.musicWebView != nil {
+					SessionRow(
+						icon: "music.note", title: "Music",
+						selected: sessions.active == .music,
+						audible: sessions.isAudible(sessions.musicWebView),
+						select: { sessions.showMusic() },
+						close: nil)
+						.padding(.horizontal, 8)
+				}
+				ForEach(sessions.watchSessions) { session in
+					TabSessionRow(sessions: sessions, progress: progress, session: session)
+						.padding(.horizontal, 8)
+				}
+				let openIds = Set(sessions.watchSessions.compactMap { sessions.currentVideoId(of: $0.webView) })
+				let continuing = progress.inProgress.filter { !openIds.contains($0.videoId) }
 				if !continuing.isEmpty {
-					HStack(spacing: 6) {
-						Image(systemName: "memories")
-						Text("Continue")
-						Text("\(continuing.count)")
-							.foregroundStyle(.tertiary)
-						Spacer(minLength: 0)
-					}
-					.font(.system(size: 13, weight: .semibold))
-					.foregroundStyle(.secondary)
-					.padding(.top, 10)
-					.padding(.horizontal, 10)
+					sectionHeader(icon: "memories", title: "Continue", count: continuing.count)
 					ForEach(continuing) { entry in
 						ContinueRow(sessions: sessions, progress: progress, entry: entry)
 					}
@@ -53,6 +66,87 @@ struct WatchPipelineView: View {
 				}
 			}
 			.padding(.bottom, 10)
+		}
+	}
+
+	private func sectionHeader(icon: String, title: String, count: Int) -> some View {
+		HStack(spacing: 6) {
+			Image(systemName: icon)
+			Text(title)
+			Text("\(count)")
+				.foregroundStyle(.tertiary)
+			Spacer(minLength: 0)
+		}
+		.font(.system(size: 13, weight: .semibold))
+		.foregroundStyle(.secondary)
+		.padding(.top, 10)
+		.padding(.horizontal, 10)
+	}
+}
+
+// An open watch tab in the Sessions block: live title, playing indicator,
+// progress bar once started (blank until then), close X.
+struct TabSessionRow: View {
+	@ObservedObject var sessions: WebSessionManager
+	@ObservedObject var progress: ProgressStore
+	let session: WatchSession
+	@State private var title = "Loading..."
+	@State private var videoId: String?
+
+	private var selected: Bool {
+		sessions.active == .watch(session.id)
+	}
+
+	var body: some View {
+		HStack(spacing: 8) {
+			Image(systemName: "play.rectangle")
+				.frame(width: 24)
+			VStack(alignment: .leading, spacing: 3) {
+				HStack(spacing: 6) {
+					Text(title)
+						.lineLimit(1)
+						.truncationMode(.tail)
+					if sessions.isAudible(session.webView) {
+						Image(systemName: "speaker.wave.2.fill")
+							.font(.system(size: 12))
+							.foregroundStyle(Color.accentColor)
+					}
+				}
+				if let videoId, let entry = progress.records[videoId], entry.duration > 0 {
+					ProgressView(value: entry.fraction)
+						.controlSize(.small)
+				}
+			}
+			Spacer(minLength: 0)
+			Button {
+				sessions.closeWatchTab(session)
+			} label: {
+				Image(systemName: "xmark")
+					.font(.system(size: 13, weight: .bold))
+					.frame(width: 26, height: 26)
+					.contentShape(Rectangle())
+			}
+			.buttonStyle(.borderless)
+			.help("Close tab")
+		}
+		.font(.system(size: 18))
+		.padding(.vertical, 7)
+		.padding(.horizontal, 10)
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.background(
+			RoundedRectangle(cornerRadius: 6)
+				.fill(selected ? Color.accentColor.opacity(0.22) : Color.clear))
+		.contentShape(Rectangle())
+		.onTapGesture {
+			sessions.active = .watch(session.id)
+		}
+		.onReceive(session.webView.publisher(for: \.title)) { newTitle in
+			if let newTitle, !newTitle.isEmpty {
+				title = newTitle.strippedYouTubeSuffix
+			}
+		}
+		.onReceive(session.webView.publisher(for: \.url)) { _ in
+			videoId = sessions.currentVideoId(of: session.webView)
 		}
 	}
 }
