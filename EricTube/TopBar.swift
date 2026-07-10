@@ -41,6 +41,14 @@ struct TopBar: View {
 			barDivider(28)
 			NavButtons(sessions: sessions)
 				.id(sessions.active)
+			barDivider(22)
+			IconButton("speaker.wave.2",
+				help: sessions.playInBackground
+					? "Background play on: switching tabs keeps playing"
+					: "Background play off: switching tabs pauses",
+				active: sessions.playInBackground) {
+				sessions.playInBackground.toggle()
+			}
 			if !sessions.watchSessions.isEmpty {
 				barDivider(28)
 				ScrollView(.horizontal, showsIndicators: false) {

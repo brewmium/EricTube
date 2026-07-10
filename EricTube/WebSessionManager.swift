@@ -35,7 +35,20 @@ final class WebSessionManager: ObservableObject {
 	private let processPool = WKProcessPool()
 
 	@Published var active: SessionKey = .master {
-		didSet { scheduleSnapshot() }
+		didSet {
+			if oldValue != active {
+				pauseOnLeave(oldValue)
+			}
+			scheduleSnapshot()
+		}
+	}
+
+	// The concurrency policy (CREATION.md sect. 9): switching away pauses
+	// the session you left, unless background play is on. Music is always
+	// exempt — background audio is its entire purpose.
+	@Published var playInBackground: Bool =
+		UserDefaults.standard.bool(forKey: "playInBackground") {
+		didSet { UserDefaults.standard.set(playInBackground, forKey: "playInBackground") }
 	}
 	@Published var paletteRequest: PaletteRequest?
 	@Published private(set) var watchSessions: [WatchSession] = []
@@ -64,14 +77,23 @@ final class WebSessionManager: ObservableObject {
 	}
 
 	var activeWebView: WKWebView {
-		switch active {
+		webView(for: active) ?? masterWebView
+	}
+
+	private func webView(for key: SessionKey) -> WKWebView? {
+		switch key {
 		case .master:
 			return masterWebView
 		case .music:
-			return musicWebView ?? masterWebView
+			return musicWebView
 		case .watch(let id):
-			return watchSessions.first { $0.id == id }?.webView ?? masterWebView
+			return watchSessions.first { $0.id == id }?.webView
 		}
+	}
+
+	private func pauseOnLeave(_ key: SessionKey) {
+		guard !restoring, !playInBackground, key != .music else { return }
+		webView(for: key)?.evaluateJavaScript(Injection.pauseNow, completionHandler: nil)
 	}
 
 	// Every session that must stay mounted (hidden, not torn down) so
@@ -105,35 +127,43 @@ final class WebSessionManager: ObservableObject {
 	}
 
 	// Opening a video with recorded progress resumes where it left off.
-	func openWatchTab(videoId raw: String) {
+	func openWatchTab(videoId raw: String, activate: Bool = true) {
 		let videoId = raw.filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
 		guard !videoId.isEmpty else { return }
 		var path = "/watch?v=\(videoId)"
 		if let seconds = ProgressStore.shared.resumeSeconds(for: videoId) {
 			path += "&t=\(Int(seconds))s"
 		}
-		openTab(path: path)
+		openTab(path: path, activate: activate)
 	}
 
 	// Any youtube.com path (watch, channel, playlist) as an ephemeral tab,
-	// via the warm pool when one is ready.
-	func openTab(path: String) {
+	// via the warm pool when one is ready. Background opens (activate
+	// false) stay on the current session and arm a one-shot pause so the
+	// new tab loads ready-but-silent.
+	func openTab(path: String, activate: Bool = true) {
 		paletteRequest = nil
+		let fullURL = URL(string: "https://www.youtube.com\(path)")!
 		let webView: WKWebView
-		if let recycled = parked.popLast() {
+		if let recycled = parked.last,
+		   !recycled.isLoading, recycled.url?.host?.hasSuffix("youtube.com") == true {
+			parked.removeLast()
+			if !activate {
+				recycled.evaluateJavaScript(Injection.armPause, completionHandler: nil)
+			}
+			recycled.evaluateJavaScript(Injection.spaNavigate(path: path), completionHandler: nil)
 			webView = recycled
 		} else {
-			webView = makeWebView(kind: "watch", url: nil)
-		}
-		if !webView.isLoading, webView.url?.host?.hasSuffix("youtube.com") == true {
-			webView.evaluateJavaScript(Injection.spaNavigate(path: path), completionHandler: nil)
-		} else {
-			webView.load(URLRequest(url: URL(string: "https://www.youtube.com\(path)")!))
+			// A cold load can't be pause-armed mid-flight, so background
+			// opens always get a fresh, pre-armed view.
+			webView = makeWebView(kind: "watch", url: fullURL, restorePaused: !activate)
 		}
 
 		let session = WatchSession(webView: webView)
 		watchSessions.append(session)
-		active = .watch(session.id)
+		if activate {
+			active = .watch(session.id)
+		}
 		scheduleSnapshot()
 	}
 

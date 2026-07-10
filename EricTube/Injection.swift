@@ -253,21 +253,35 @@ enum Injection {
 	})();
 	"""#
 
-	// Restored tabs load at their saved timestamp but must not blast audio
-	// on launch: pause the first playback attempt, once.
+	// One-shot pause of the next playback attempt. Armed at load for
+	// restored views (__erictubeRestorePause flag) and on demand via
+	// __erictubeArmPause() for tabs opened in the background.
 	static let restorePauseScript = #"""
 	(function () {
-		if (!window.__erictubeRestorePause) { return; }
-		function once(e) {
-			if (e.target instanceof HTMLVideoElement) {
-				e.target.pause();
-				document.removeEventListener('playing', once, true);
-				window.__erictubeRestorePause = false;
+		if (window.__erictubeArmPause) { return; }
+		window.__erictubeArmPause = function () {
+			if (window.__erictubePauseArmed) { return; }
+			window.__erictubePauseArmed = true;
+			function once(e) {
+				if (e.target instanceof HTMLVideoElement) {
+					e.target.pause();
+					document.removeEventListener('playing', once, true);
+					window.__erictubePauseArmed = false;
+				}
 			}
+			document.addEventListener('playing', once, true);
+		};
+		if (window.__erictubeRestorePause) {
+			window.__erictubeArmPause();
 		}
-		document.addEventListener('playing', once, true);
 	})();
 	"""#
+
+	static let armPause = "window.__erictubeArmPause && window.__erictubeArmPause();"
+
+	// Pauses the page's main video if playing (switching away from a
+	// session with background play off).
+	static let pauseNow = "(function(){const v=document.querySelector('video.html5-main-video')||document.querySelector('video');if(v&&!v.paused){v.pause();}})();"
 
 	// Drives YouTube's own SPA router (it intercepts same-origin anchor
 	// clicks), so a warm web view hops to the target like an in-page click
