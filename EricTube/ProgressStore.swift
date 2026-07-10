@@ -108,6 +108,14 @@ final class ProgressStore: ObservableObject {
 		persist()
 	}
 
+	// Clear the done flag so a video resurfaces in Continue (dragged back).
+	func uncomplete(_ videoId: String) {
+		guard var entry = records[videoId] else { return }
+		entry.completed = false
+		records[videoId] = entry
+		persist()
+	}
+
 	private func persist() {
 		let encoder = JSONEncoder()
 		encoder.outputFormatting = [.sortedKeys]

@@ -12,16 +12,21 @@ struct SectionHeader<Trailing: View>: View {
 	// Passed the section's collapsed state at click time (so the caller can
 	// expand-all when a closed section is modifier-clicked, else collapse-all).
 	var onModifierClick: ((Bool) -> Void)?
+	// A video (by id) dropped on this header — the section files it in.
+	var onDropVideo: ((String) -> Void)?
 	let trailing: Trailing
+	@State private var dropTargeted = false
 
 	init(icon: String, title: String, count: Int, collapsed: Binding<Bool>,
 	     onModifierClick: ((Bool) -> Void)? = nil,
+	     onDropVideo: ((String) -> Void)? = nil,
 	     @ViewBuilder trailing: () -> Trailing) {
 		self.icon = icon
 		self.title = title
 		self.count = count
 		self._collapsed = collapsed
 		self.onModifierClick = onModifierClick
+		self.onDropVideo = onDropVideo
 		self.trailing = trailing()
 	}
 
@@ -53,16 +58,28 @@ struct SectionHeader<Trailing: View>: View {
 		}
 		.font(.system(size: 15, weight: .semibold))
 		.foregroundStyle(.secondary)
-		.padding(.top, 10)
+		.padding(.vertical, 3)
+		.padding(.top, 7)
 		.padding(.horizontal, 10)
+		.background(
+			RoundedRectangle(cornerRadius: 6)
+				.fill(dropTargeted && onDropVideo != nil
+					? Color.accentColor.opacity(0.25) : Color.clear)
+				.padding(.horizontal, 6))
+		.dropDestination(for: String.self) { items, _ in
+			guard let onDropVideo, let first = items.first, !first.isEmpty else { return false }
+			onDropVideo(first)
+			return true
+		} isTargeted: { dropTargeted = $0 }
 	}
 }
 
 extension SectionHeader where Trailing == EmptyView {
 	init(icon: String, title: String, count: Int, collapsed: Binding<Bool>,
-	     onModifierClick: ((Bool) -> Void)? = nil) {
+	     onModifierClick: ((Bool) -> Void)? = nil,
+	     onDropVideo: ((String) -> Void)? = nil) {
 		self.init(icon: icon, title: title, count: count, collapsed: collapsed,
-			onModifierClick: onModifierClick) { EmptyView() }
+			onModifierClick: onModifierClick, onDropVideo: onDropVideo) { EmptyView() }
 	}
 }
 
@@ -87,7 +104,8 @@ struct WatchPipelineView: View {
 				SectionHeader(
 					icon: "rectangle.stack.badge.play", title: "Sessions",
 					count: 1 + (sessions.musicWebView == nil ? 0 : 1) + sessions.watchSessions.count,
-					collapsed: $collapseSessions, onModifierClick: handleModifierClick) {
+					collapsed: $collapseSessions, onModifierClick: handleSessionsModifierClick,
+					onDropVideo: openInSessions) {
 					Button {
 						sessions.newSession()
 					} label: {
@@ -120,10 +138,15 @@ struct WatchPipelineView: View {
 					}
 				}
 				let openIds = Set(sessions.watchSessions.compactMap { sessions.currentVideoId(of: $0.webView) })
-				let continuing = progress.inProgress.filter { !openIds.contains($0.videoId) }
+				// Continue is the unfiled in-progress bucket: drop the ones
+				// open as a tab, and the ones already filed into a tier.
+				let continuing = progress.inProgress.filter {
+					!openIds.contains($0.videoId) && store.video(for: $0.videoId)?.tier == nil
+				}
 				if !continuing.isEmpty {
 					SectionHeader(icon: "memories", title: "Continue", count: continuing.count,
-						collapsed: $collapseContinue, onModifierClick: handleModifierClick)
+						collapsed: $collapseContinue, onModifierClick: handleOtherModifierClick,
+						onDropVideo: backToContinue)
 					if !collapseContinue {
 						ForEach(continuing) { entry in
 							ContinueRow(sessions: sessions, progress: progress, entry: entry)
@@ -134,7 +157,8 @@ struct WatchPipelineView: View {
 					let items = store.inTier(tier)
 					let collapsed = tierCollapsed(tier)
 					SectionHeader(icon: tier.icon, title: tier.displayName, count: items.count,
-						collapsed: collapsed, onModifierClick: handleModifierClick)
+						collapsed: collapsed, onModifierClick: handleOtherModifierClick,
+						onDropVideo: { fileVideo($0, into: tier) })
 					if !collapsed.wrappedValue {
 						ForEach(items) { video in
 							SavedVideoRow(sessions: sessions, store: store, video: video)
@@ -151,7 +175,7 @@ struct WatchPipelineView: View {
 				if !history.isEmpty {
 					SectionHeader(icon: "clock.arrow.circlepath", title: "Previously Watched",
 						count: history.count, collapsed: $collapseHistory,
-						onModifierClick: handleModifierClick)
+						onModifierClick: handleOtherModifierClick, onDropVideo: markWatched)
 					if !collapseHistory {
 						ForEach(history) { entry in
 							HistoryRow(sessions: sessions, progress: progress, entry: entry)
@@ -171,24 +195,57 @@ struct WatchPipelineView: View {
 		}
 	}
 
-	// Cmd/Option-click any header: if the clicked section was closed, open
-	// everything; otherwise fold everything but Sessions.
-	private func handleModifierClick(wasCollapsed: Bool) {
-		if wasCollapsed {
-			setAllCollapsed(false)
-		} else {
-			setAllCollapsed(true)
-			collapseSessions = false
-		}
+	// Cmd/Option-click a non-Sessions header: every OTHER section takes the
+	// opposite of the clicked one's state; Sessions is left alone.
+	private func handleOtherModifierClick(wasCollapsed: Bool) {
+		let value = !wasCollapsed
+		collapseContinue = value
+		collapseNext = value
+		collapseLater = value
+		collapseMaybe = value
+		collapseHistory = value
 	}
 
-	private func setAllCollapsed(_ value: Bool) {
+	// Cmd/Option-click the Sessions header: the only way to toggle everything
+	// including Sessions in one shot.
+	private func handleSessionsModifierClick(wasCollapsed: Bool) {
+		let value = !wasCollapsed
 		collapseSessions = value
 		collapseContinue = value
 		collapseNext = value
 		collapseLater = value
 		collapseMaybe = value
 		collapseHistory = value
+	}
+
+	// MARK: - Drag between sections (drop a video onto a section header)
+
+	// Drop on a tier: file it there (moving between tiers just resets the
+	// tier), and if it's a live session, close it — it left the live list.
+	private func fileVideo(_ videoId: String, into tier: Tier) {
+		guard !videoId.isEmpty else { return }
+		store.save(videoId: videoId, tier: tier)
+		sessions.closeSession(forVideoId: videoId)
+	}
+
+	// Drop on Sessions: open it live (additive — doesn't unfile).
+	private func openInSessions(_ videoId: String) {
+		guard !videoId.isEmpty else { return }
+		sessions.openWatchTab(videoId: videoId)
+	}
+
+	// Drop on Continue: back to plain in-progress — unfile from its tier and
+	// clear the done flag so it resurfaces here.
+	private func backToContinue(_ videoId: String) {
+		guard !videoId.isEmpty else { return }
+		store.archive(videoId)
+		progress.uncomplete(videoId)
+	}
+
+	// Drop on Previously Watched: mark it done.
+	private func markWatched(_ videoId: String) {
+		guard !videoId.isEmpty else { return }
+		progress.dismiss(videoId)
 	}
 }
 
@@ -275,6 +332,7 @@ struct SessionTabRow: View {
 			sessions.active = key
 		}
 		.onHover { hovering = $0 }
+		.draggable(videoId ?? "")
 		.onReceive(webView.publisher(for: \.title)) { newTitle in
 			if let newTitle, !newTitle.isEmpty {
 				title = newTitle.strippedYouTubeSuffix
@@ -318,6 +376,7 @@ struct ContinueRow: View {
 			sessions.openWatchTab(videoId: entry.videoId)
 		}
 		.onHover { hovering = $0 }
+		.draggable(entry.videoId)
 	}
 }
 
@@ -351,6 +410,7 @@ struct HistoryRow: View {
 			sessions.openWatchTab(videoId: entry.videoId)
 		}
 		.onHover { hovering = $0 }
+		.draggable(entry.videoId)
 	}
 }
 
@@ -1001,6 +1061,7 @@ struct SavedVideoRow: View {
 		.onTapGesture {
 			sessions.openWatchTab(videoId: video.videoId)
 		}
+		.draggable(video.videoId)
 	}
 }
 

@@ -235,6 +235,14 @@ final class WebSessionManager: ObservableObject {
 		}
 	}
 
+	// Close any open watch tab currently showing this video (used when a
+	// video is dragged out of Sessions into a saved tier).
+	func closeSession(forVideoId videoId: String) {
+		for session in watchSessions where currentVideoId(of: session.webView) == videoId {
+			closeWatchTab(session)
+		}
+	}
+
 	func closeWatchTab(_ session: WatchSession) {
 		watchSessions.removeAll { $0.id == session.id }
 		audible.remove(ObjectIdentifier(session.webView))
