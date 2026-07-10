@@ -45,10 +45,18 @@ final class ProgressStore: ObservableObject {
 	func record(videoId: String, title: String, seconds: Double, duration: Double, path: String, sessionKind: String) {
 		guard sessionKind != "music", duration > 0, !path.hasPrefix("/shorts") else { return }
 		guard seconds > 5 else { return }
+		// Junk titles ("YouTube", empty) never overwrite a good one; on
+		// first sight, borrow the library's title if the video is known.
+		let junkTitle = title.isEmpty || title == "YouTube"
+		let initialTitle = junkTitle
+			? (OverlayStore.shared.video(for: videoId)?.title ?? "(untitled)")
+			: title
 		var entry = records[videoId] ?? WatchProgress(
-			videoId: videoId, title: title, seconds: seconds,
+			videoId: videoId, title: initialTitle, seconds: seconds,
 			duration: duration, lastWatchedAt: Date(), completed: false)
-		entry.title = title
+		if !junkTitle {
+			entry.title = title
+		}
 		entry.seconds = seconds
 		entry.duration = duration
 		entry.lastWatchedAt = Date()

@@ -220,6 +220,17 @@ enum Injection {
 			return m ? m[1] : null;
 		}
 
+		// document.title is still literally "YouTube" on fresh paused
+		// loads; prefer the watch page's h1 and never report junk.
+		function pageTitle() {
+			const h1 = document.querySelector('h1.ytd-watch-metadata yt-formatted-string')
+				|| document.querySelector('h1 yt-formatted-string.ytd-watch-metadata');
+			const fromH1 = h1 && h1.textContent ? h1.textContent.trim() : '';
+			if (fromH1) { return fromH1; }
+			const fromDoc = document.title || '';
+			return fromDoc === 'YouTube' ? '' : fromDoc;
+		}
+
 		function report(force) {
 			const v = document.querySelector('video.html5-main-video') || document.querySelector('video');
 			const id = videoIdHere();
@@ -231,7 +242,7 @@ enum Injection {
 				window.webkit.messageHandlers.erictube.postMessage({
 					kind: 'progress',
 					videoId: id,
-					title: document.title,
+					title: pageTitle(),
 					seconds: v.currentTime,
 					duration: isFinite(v.duration) ? v.duration : 0,
 					playing: !v.paused && !v.ended,
