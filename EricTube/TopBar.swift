@@ -11,6 +11,7 @@ struct TopBar: View {
 	@ObservedObject var sessions: WebSessionManager
 	@AppStorage("railCollapsed") private var collapsed = false
 	@AppStorage("railSegment") private var segment = "watch"
+	@State private var showSettings = false
 
 	var body: some View {
 		HStack(spacing: 16) {
@@ -55,7 +56,11 @@ struct TopBar: View {
 			URLDisplay(sessions: sessions)
 				.id(sessions.active)
 				.frame(maxWidth: .infinity, alignment: .leading)
-			BarMenu(sessions: sessions)
+			CopyURLButton(sessions: sessions)
+			BarMenu(sessions: sessions, showSettings: $showSettings)
+				.popover(isPresented: $showSettings, arrowEdge: .bottom) {
+					SettingsView(sessions: sessions)
+				}
 		}
 		.padding(.leading, 8)
 		.padding(.trailing, 10)
@@ -108,7 +113,7 @@ struct URLDisplay: View {
 
 	var body: some View {
 		Text(urlString)
-			.font(.system(size: 13))
+			.font(.system(size: 15))
 			.foregroundStyle(.secondary)
 			.lineLimit(1)
 			.truncationMode(.middle)
@@ -120,21 +125,40 @@ struct URLDisplay: View {
 	}
 }
 
-// Top-bar three-dot menu: page-level utilities for the active session.
-struct BarMenu: View {
+// Always-visible copy button for the active session's URL — sits at the end
+// of the URL display, not buried under the three-dot menu.
+struct CopyURLButton: View {
 	@ObservedObject var sessions: WebSessionManager
 
 	var body: some View {
+		Button {
+			guard let url = sessions.activeWebView.url else { return }
+			NSPasteboard.general.clearContents()
+			NSPasteboard.general.setString(url.absoluteString, forType: .string)
+		} label: {
+			Image(systemName: "doc.on.doc")
+				.font(.system(size: 16))
+				.foregroundStyle(Color.primary.opacity(0.85))
+				.frame(width: 30, height: 30)
+		}
+		.buttonStyle(.borderless)
+		.help("Copy URL")
+	}
+}
+
+// Top-bar three-dot menu: page-level utilities for the active session.
+struct BarMenu: View {
+	@ObservedObject var sessions: WebSessionManager
+	@Binding var showSettings: Bool
+
+	var body: some View {
 		Menu {
-			Button("Copy URL") {
-				guard let url = sessions.activeWebView.url else { return }
-				NSPasteboard.general.clearContents()
-				NSPasteboard.general.setString(url.absoluteString, forType: .string)
-			}
 			Button("Open in Browser") {
 				guard let url = sessions.activeWebView.url else { return }
 				NSWorkspace.shared.open(url)
 			}
+			Divider()
+			Button("Settings\u{2026}") { showSettings = true }
 		} label: {
 			Image(systemName: "ellipsis")
 				.font(.system(size: 20))

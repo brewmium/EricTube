@@ -149,6 +149,7 @@ enum Injection {
 		if (window.__erictubeTheater) { return; }
 		window.__erictubeTheater = true;
 		function enforce() {
+			if (!window.__erictubePreferTheater) { return; }
 			if (location.pathname !== '/watch') { return; }
 			let tries = 0;
 			const timer = setInterval(function () {
@@ -274,9 +275,12 @@ enum Injection {
 			if (window.__erictubePauseArmed) { return; }
 			window.__erictubePauseArmed = true;
 			function once(e) {
-				if (e.target instanceof HTMLVideoElement) {
+				if (!(e.target instanceof HTMLVideoElement)) { return; }
+				document.removeEventListener('playing', once, true);
+				// A deliberate play (autoplay-on-select) disarms us first;
+				// don't fight it.
+				if (window.__erictubePauseArmed) {
 					e.target.pause();
-					document.removeEventListener('playing', once, true);
 					window.__erictubePauseArmed = false;
 				}
 			}
@@ -293,6 +297,27 @@ enum Injection {
 	// Pauses the page's main video if playing (switching away from a
 	// session with background play off).
 	static let pauseNow = "(function(){const v=document.querySelector('video.html5-main-video')||document.querySelector('video');if(v&&!v.paused){v.pause();}})();"
+
+	// Plays the page's main video (autoplay-on-select). Disarms any pending
+	// one-shot pause first, and no-ops off a /watch page so switching to the
+	// home feed stays quiet.
+	static let playNow = "(function(){if(location.pathname!=='/watch'){return;}window.__erictubePauseArmed=false;const v=document.querySelector('video.html5-main-video')||document.querySelector('video');if(v&&v.paused){v.play();}})();"
+
+	// Live-applies the theater preference to a mounted view: sets the flag and
+	// toggles the current watch page's layout to match immediately.
+	static func setTheater(_ on: Bool) -> String {
+		let want = on ? "true" : "false"
+		return """
+		(function () {
+			window.__erictubePreferTheater = \(want);
+			if (location.pathname !== '/watch') { return; }
+			const flexy = document.querySelector('ytd-watch-flexy');
+			const btn = document.querySelector('.ytp-size-button');
+			if (!flexy || !btn) { return; }
+			if (\(want) !== flexy.hasAttribute('theater')) { btn.click(); }
+		})();
+		"""
+	}
 
 	// Drives YouTube's own SPA router (it intercepts same-origin anchor
 	// clicks), so a warm web view hops to the target like an in-page click

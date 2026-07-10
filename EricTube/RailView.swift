@@ -73,7 +73,7 @@ struct SessionRow: View {
 				.help("Close tab")
 			}
 		}
-		.font(.system(size: 18))
+		.font(.system(size: 14))
 		.padding(.vertical, 7)
 		.padding(.horizontal, 10)
 		.frame(maxWidth: .infinity, alignment: .leading)

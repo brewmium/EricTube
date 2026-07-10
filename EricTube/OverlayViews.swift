@@ -104,7 +104,7 @@ struct TabSessionRow: View {
 			VStack(alignment: .leading, spacing: 3) {
 				HStack(spacing: 6) {
 					Text(title)
-						.lineLimit(1)
+						.lineLimit(2)
 						.truncationMode(.tail)
 					if sessions.isAudible(session.webView) {
 						Image(systemName: "speaker.wave.2.fill")
@@ -129,7 +129,7 @@ struct TabSessionRow: View {
 			.buttonStyle(.borderless)
 			.help("Close tab")
 		}
-		.font(.system(size: 18))
+		.font(.system(size: 14))
 		.padding(.vertical, 7)
 		.padding(.horizontal, 10)
 		.frame(maxWidth: .infinity, alignment: .leading)

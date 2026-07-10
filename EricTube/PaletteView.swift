@@ -18,10 +18,11 @@ struct PaletteView: View {
 			}
 		} else {
 			VStack(alignment: .leading, spacing: 2) {
-				// Background on purpose: tagging videos while browsing must
-				// not yank you off the page you're on.
+				// Background by default: tagging videos while browsing must
+				// not yank you off the page you're on. Autoplay-on-select
+				// flips this — jump straight to the new tab and play.
 				PaletteRow(icon: "play.rectangle.on.rectangle", label: "Open as tab") {
-					sessions.openWatchTab(videoId: request.videoId, activate: false)
+					sessions.openWatchTab(videoId: request.videoId, activate: sessions.autoplayOnSelect)
 				}
 				Divider()
 					.padding(.vertical, 2)

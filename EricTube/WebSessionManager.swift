@@ -38,6 +38,7 @@ final class WebSessionManager: ObservableObject {
 		didSet {
 			if oldValue != active {
 				pauseOnLeave(oldValue)
+				playOnEnter(active)
 			}
 			scheduleSnapshot()
 		}
@@ -49,6 +50,25 @@ final class WebSessionManager: ObservableObject {
 	@Published var playInBackground: Bool =
 		UserDefaults.standard.bool(forKey: "playInBackground") {
 		didSet { UserDefaults.standard.set(playInBackground, forKey: "playInBackground") }
+	}
+
+	// Settings toggles. Theater mode is a preference (default on) rather than
+	// a hard rule; changing it re-applies live to every mounted view.
+	@Published var preferTheater: Bool =
+		UserDefaults.standard.object(forKey: "preferTheater") as? Bool ?? true {
+		didSet {
+			UserDefaults.standard.set(preferTheater, forKey: "preferTheater")
+			let js = Injection.setTheater(preferTheater)
+			for entry in displayed { entry.webView.evaluateJavaScript(js, completionHandler: nil) }
+			for webView in parked { webView.evaluateJavaScript(js, completionHandler: nil) }
+		}
+	}
+
+	// When on, activating a session (tapping a tab, or opening a video into a
+	// tab from the palette) jumps to it and starts playback.
+	@Published var autoplayOnSelect: Bool =
+		UserDefaults.standard.bool(forKey: "autoplayOnSelect") {
+		didSet { UserDefaults.standard.set(autoplayOnSelect, forKey: "autoplayOnSelect") }
 	}
 	@Published var paletteRequest: PaletteRequest?
 	@Published private(set) var watchSessions: [WatchSession] = []
@@ -94,6 +114,13 @@ final class WebSessionManager: ObservableObject {
 	private func pauseOnLeave(_ key: SessionKey) {
 		guard !restoring, !playInBackground, key != .music else { return }
 		webView(for: key)?.evaluateJavaScript(Injection.pauseNow, completionHandler: nil)
+	}
+
+	// With autoplay-on-select on, the session you switch to starts playing
+	// (playNow no-ops off a /watch page, so landing on the home feed is quiet).
+	private func playOnEnter(_ key: SessionKey) {
+		guard !restoring, autoplayOnSelect else { return }
+		webView(for: key)?.evaluateJavaScript(Injection.playNow, completionHandler: nil)
 	}
 
 	// Every session that must stay mounted (hidden, not torn down) so
@@ -358,6 +385,9 @@ final class WebSessionManager: ObservableObject {
 		controller.add(MessageProxy(manager: self), name: Injection.messageName)
 		controller.addUserScript(WKUserScript(
 			source: Injection.kindScript(kind), injectionTime: .atDocumentStart, forMainFrameOnly: true))
+		controller.addUserScript(WKUserScript(
+			source: "window.__erictubePreferTheater = \(preferTheater ? "true" : "false");",
+			injectionTime: .atDocumentStart, forMainFrameOnly: true))
 		if restorePaused {
 			controller.addUserScript(WKUserScript(
 				source: "window.__erictubeRestorePause = true;",
