@@ -85,8 +85,10 @@ struct WatchPipelineView: View {
 }
 
 // The close/dismiss X shared by the Sessions and Continue rows: a small
-// glyph pinned to the trailing edge with a generous (wider) hit area
-// extending left, revealed only while its row is hovered.
+// glyph pinned 10pt off the trailing edge with a generous (wider) hit area
+// extending left, revealed only while its row is hovered. Overlaid on the row
+// (not in its layout flow) so it doesn't steal width from the title — and its
+// hit test is gated to `visible` so a hidden X never intercepts a row tap.
 struct RowCloseButton: View {
 	let help: String
 	let visible: Bool
@@ -101,7 +103,9 @@ struct RowCloseButton: View {
 		}
 		.buttonStyle(.borderless)
 		.help(help)
+		.padding(.trailing, 10)
 		.opacity(visible ? 1 : 0)
+		.allowsHitTesting(visible)
 	}
 }
 
@@ -133,16 +137,15 @@ struct TabSessionRow: View {
 							.font(.system(size: 12))
 							.foregroundStyle(Color.accentColor)
 					}
+					Spacer(minLength: 0)
 				}
 				if let videoId, let entry = progress.records[videoId], entry.duration > 0 {
 					ProgressView(value: entry.fraction)
 						.controlSize(.small)
 				}
 			}
-			Spacer(minLength: 0)
-			RowCloseButton(help: "Close tab", visible: hovering) {
-				sessions.closeWatchTab(session)
-			}
+			.frame(maxWidth: .infinity, alignment: .leading)
+			.padding(.trailing, 16)
 		}
 		.font(.system(size: 14))
 		.padding(.vertical, 7)
@@ -152,6 +155,11 @@ struct TabSessionRow: View {
 			RoundedRectangle(cornerRadius: 6)
 				.fill(selected ? Color.accentColor.opacity(0.22) : Color.clear))
 		.contentShape(Rectangle())
+		.overlay(alignment: .trailing) {
+			RowCloseButton(help: "Close tab", visible: hovering) {
+				sessions.closeWatchTab(session)
+			}
+		}
 		.onTapGesture {
 			sessions.active = .watch(session.id)
 		}
@@ -184,14 +192,17 @@ struct ContinueRow: View {
 				ProgressView(value: entry.fraction)
 					.controlSize(.small)
 			}
-			Spacer(minLength: 0)
-			RowCloseButton(help: "Remove from Continue", visible: hovering) {
-				progress.dismiss(entry.videoId)
-			}
+			.frame(maxWidth: .infinity, alignment: .leading)
+			.padding(.trailing, 16)
 		}
 		.padding(.vertical, 4)
 		.padding(.horizontal, 10)
 		.contentShape(Rectangle())
+		.overlay(alignment: .trailing) {
+			RowCloseButton(help: "Remove from Continue", visible: hovering) {
+				progress.dismiss(entry.videoId)
+			}
+		}
 		.onTapGesture {
 			sessions.openWatchTab(videoId: entry.videoId)
 		}
