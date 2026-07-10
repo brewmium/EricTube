@@ -1,4 +1,5 @@
 import SwiftUI
+import WebKit
 
 // A collapsible section header for the Watch list: a disclosure chevron +
 // icon + title + count, with an optional trailing accessory (the Sessions "+").
@@ -8,21 +9,28 @@ struct SectionHeader<Trailing: View>: View {
 	let title: String
 	let count: Int
 	@Binding var collapsed: Bool
+	var onCommandClick: (() -> Void)?
 	let trailing: Trailing
 
 	init(icon: String, title: String, count: Int, collapsed: Binding<Bool>,
+	     onCommandClick: (() -> Void)? = nil,
 	     @ViewBuilder trailing: () -> Trailing) {
 		self.icon = icon
 		self.title = title
 		self.count = count
 		self._collapsed = collapsed
+		self.onCommandClick = onCommandClick
 		self.trailing = trailing()
 	}
 
 	var body: some View {
 		HStack(spacing: 6) {
 			Button {
-				collapsed.toggle()
+				if let onCommandClick, NSEvent.modifierFlags.contains(.command) {
+					onCommandClick()
+				} else {
+					collapsed.toggle()
+				}
 			} label: {
 				HStack(spacing: 6) {
 					Image(systemName: collapsed ? "chevron.right" : "chevron.down")
@@ -48,8 +56,10 @@ struct SectionHeader<Trailing: View>: View {
 }
 
 extension SectionHeader where Trailing == EmptyView {
-	init(icon: String, title: String, count: Int, collapsed: Binding<Bool>) {
-		self.init(icon: icon, title: title, count: count, collapsed: collapsed) { EmptyView() }
+	init(icon: String, title: String, count: Int, collapsed: Binding<Bool>,
+	     onCommandClick: (() -> Void)? = nil) {
+		self.init(icon: icon, title: title, count: count, collapsed: collapsed,
+			onCommandClick: onCommandClick) { EmptyView() }
 	}
 }
 
@@ -74,7 +84,7 @@ struct WatchPipelineView: View {
 				SectionHeader(
 					icon: "rectangle.stack.badge.play", title: "Sessions",
 					count: 1 + (sessions.musicWebView == nil ? 0 : 1) + sessions.watchSessions.count,
-					collapsed: $collapseSessions) {
+					collapsed: $collapseSessions, onCommandClick: expandAll) {
 					Button {
 						sessions.newSession()
 					} label: {
@@ -87,12 +97,8 @@ struct WatchPipelineView: View {
 					.help("New session")
 				}
 				if !collapseSessions {
-					SessionRow(
-						icon: "house", title: "Home",
-						selected: sessions.active == .master,
-						audible: sessions.isAudible(sessions.masterWebView),
-						select: { sessions.active = .master },
-						close: nil)
+					SessionTabRow(sessions: sessions, progress: progress,
+						webView: sessions.masterWebView, key: .master, onClose: nil)
 						.padding(.leading, 8)
 					if sessions.musicWebView != nil {
 						SessionRow(
@@ -104,7 +110,9 @@ struct WatchPipelineView: View {
 							.padding(.leading, 8)
 					}
 					ForEach(sessions.watchSessions) { session in
-						TabSessionRow(sessions: sessions, progress: progress, session: session)
+						SessionTabRow(sessions: sessions, progress: progress,
+							webView: session.webView, key: .watch(session.id),
+							onClose: { sessions.closeWatchTab(session) })
 							.padding(.leading, 8)
 					}
 				}
@@ -112,7 +120,7 @@ struct WatchPipelineView: View {
 				let continuing = progress.inProgress.filter { !openIds.contains($0.videoId) }
 				if !continuing.isEmpty {
 					SectionHeader(icon: "memories", title: "Continue", count: continuing.count,
-						collapsed: $collapseContinue)
+						collapsed: $collapseContinue, onCommandClick: collapseAllButSessions)
 					if !collapseContinue {
 						ForEach(continuing) { entry in
 							ContinueRow(sessions: sessions, progress: progress, entry: entry)
@@ -123,7 +131,7 @@ struct WatchPipelineView: View {
 					let items = store.inTier(tier)
 					let collapsed = tierCollapsed(tier)
 					SectionHeader(icon: tier.icon, title: tier.displayName, count: items.count,
-						collapsed: collapsed)
+						collapsed: collapsed, onCommandClick: collapseAllButSessions)
 					if !collapsed.wrappedValue {
 						ForEach(items) { video in
 							SavedVideoRow(sessions: sessions, store: store, video: video)
@@ -139,7 +147,8 @@ struct WatchPipelineView: View {
 				let history = progress.watched
 				if !history.isEmpty {
 					SectionHeader(icon: "clock.arrow.circlepath", title: "Previously Watched",
-						count: history.count, collapsed: $collapseHistory)
+						count: history.count, collapsed: $collapseHistory,
+						onCommandClick: collapseAllButSessions)
 					if !collapseHistory {
 						ForEach(history) { entry in
 							HistoryRow(sessions: sessions, progress: progress, entry: entry)
@@ -157,6 +166,26 @@ struct WatchPipelineView: View {
 		case .later: return $collapseLater
 		case .maybe: return $collapseMaybe
 		}
+	}
+
+	// Cmd-click a non-Sessions header: focus on live sessions, fold the rest.
+	private func collapseAllButSessions() {
+		collapseSessions = false
+		collapseContinue = true
+		collapseNext = true
+		collapseLater = true
+		collapseMaybe = true
+		collapseHistory = true
+	}
+
+	// Cmd-click the Sessions header: undo — open everything back up.
+	private func expandAll() {
+		collapseSessions = false
+		collapseContinue = false
+		collapseNext = false
+		collapseLater = false
+		collapseMaybe = false
+		collapseHistory = false
 	}
 }
 
@@ -185,18 +214,21 @@ struct RowCloseButton: View {
 	}
 }
 
-// An open watch tab in the Sessions block: live title, playing indicator,
-// progress bar once started (blank until then), close X.
-struct TabSessionRow: View {
+// A live session row: the always-present master (a plain YouTube session, no
+// close) or an open watch tab. Live title, playing indicator, progress bar
+// once started, and a close X only when the row is closable.
+struct SessionTabRow: View {
 	@ObservedObject var sessions: WebSessionManager
 	@ObservedObject var progress: ProgressStore
-	let session: WatchSession
-	@State private var title = "Loading..."
+	let webView: WKWebView
+	let key: SessionKey
+	let onClose: (() -> Void)?
+	@State private var title = "YouTube"
 	@State private var videoId: String?
 	@State private var hovering = false
 
 	private var selected: Bool {
-		sessions.active == .watch(session.id)
+		sessions.active == key
 	}
 
 	var body: some View {
@@ -208,7 +240,7 @@ struct TabSessionRow: View {
 					Text(title)
 						.lineLimit(2)
 						.truncationMode(.tail)
-					if sessions.isAudible(session.webView) {
+					if sessions.isAudible(webView) {
 						Image(systemName: "speaker.wave.2.fill")
 							.font(.system(size: 12))
 							.foregroundStyle(Color.accentColor)
@@ -232,21 +264,21 @@ struct TabSessionRow: View {
 				.fill(selected ? Color.accentColor.opacity(0.22) : Color.clear))
 		.contentShape(Rectangle())
 		.overlay(alignment: .trailing) {
-			RowCloseButton(help: "Close tab", visible: hovering) {
-				sessions.closeWatchTab(session)
+			if let onClose {
+				RowCloseButton(help: "Close tab", visible: hovering, action: onClose)
 			}
 		}
 		.onTapGesture {
-			sessions.active = .watch(session.id)
+			sessions.active = key
 		}
 		.onHover { hovering = $0 }
-		.onReceive(session.webView.publisher(for: \.title)) { newTitle in
+		.onReceive(webView.publisher(for: \.title)) { newTitle in
 			if let newTitle, !newTitle.isEmpty {
 				title = newTitle.strippedYouTubeSuffix
 			}
 		}
-		.onReceive(session.webView.publisher(for: \.url)) { _ in
-			videoId = sessions.currentVideoId(of: session.webView)
+		.onReceive(webView.publisher(for: \.url)) { _ in
+			videoId = sessions.currentVideoId(of: webView)
 		}
 	}
 }
