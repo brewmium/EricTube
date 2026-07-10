@@ -19,7 +19,7 @@ struct WatchPipelineView: View {
 					audible: sessions.isAudible(sessions.masterWebView),
 					select: { sessions.active = .master },
 					close: nil)
-					.padding(.horizontal, 8)
+					.padding(.leading, 8)
 				if sessions.musicWebView != nil {
 					SessionRow(
 						icon: "music.note", title: "Music",
@@ -27,11 +27,11 @@ struct WatchPipelineView: View {
 						audible: sessions.isAudible(sessions.musicWebView),
 						select: { sessions.showMusic() },
 						close: nil)
-						.padding(.horizontal, 8)
+						.padding(.leading, 8)
 				}
 				ForEach(sessions.watchSessions) { session in
 					TabSessionRow(sessions: sessions, progress: progress, session: session)
-						.padding(.horizontal, 8)
+						.padding(.leading, 8)
 				}
 				let openIds = Set(sessions.watchSessions.compactMap { sessions.currentVideoId(of: $0.webView) })
 				let continuing = progress.inProgress.filter { !openIds.contains($0.videoId) }
@@ -84,6 +84,27 @@ struct WatchPipelineView: View {
 	}
 }
 
+// The close/dismiss X shared by the Sessions and Continue rows: a small
+// glyph pinned to the trailing edge with a generous (wider) hit area
+// extending left, revealed only while its row is hovered.
+struct RowCloseButton: View {
+	let help: String
+	let visible: Bool
+	let action: () -> Void
+
+	var body: some View {
+		Button(action: action) {
+			Image(systemName: "xmark")
+				.font(.system(size: 10, weight: .bold))
+				.frame(width: 40, height: 30, alignment: .trailing)
+				.contentShape(Rectangle())
+		}
+		.buttonStyle(.borderless)
+		.help(help)
+		.opacity(visible ? 1 : 0)
+	}
+}
+
 // An open watch tab in the Sessions block: live title, playing indicator,
 // progress bar once started (blank until then), close X.
 struct TabSessionRow: View {
@@ -92,6 +113,7 @@ struct TabSessionRow: View {
 	let session: WatchSession
 	@State private var title = "Loading..."
 	@State private var videoId: String?
+	@State private var hovering = false
 
 	private var selected: Bool {
 		sessions.active == .watch(session.id)
@@ -118,16 +140,9 @@ struct TabSessionRow: View {
 				}
 			}
 			Spacer(minLength: 0)
-			Button {
+			RowCloseButton(help: "Close tab", visible: hovering) {
 				sessions.closeWatchTab(session)
-			} label: {
-				Image(systemName: "xmark")
-					.font(.system(size: 13, weight: .bold))
-					.frame(width: 26, height: 26)
-					.contentShape(Rectangle())
 			}
-			.buttonStyle(.borderless)
-			.help("Close tab")
 		}
 		.font(.system(size: 14))
 		.padding(.vertical, 7)
@@ -140,6 +155,7 @@ struct TabSessionRow: View {
 		.onTapGesture {
 			sessions.active = .watch(session.id)
 		}
+		.onHover { hovering = $0 }
 		.onReceive(session.webView.publisher(for: \.title)) { newTitle in
 			if let newTitle, !newTitle.isEmpty {
 				title = newTitle.strippedYouTubeSuffix
@@ -157,6 +173,7 @@ struct ContinueRow: View {
 	@ObservedObject var sessions: WebSessionManager
 	@ObservedObject var progress: ProgressStore
 	let entry: WatchProgress
+	@State private var hovering = false
 
 	var body: some View {
 		HStack(alignment: .center, spacing: 6) {
@@ -168,16 +185,9 @@ struct ContinueRow: View {
 					.controlSize(.small)
 			}
 			Spacer(minLength: 0)
-			Button {
+			RowCloseButton(help: "Remove from Continue", visible: hovering) {
 				progress.dismiss(entry.videoId)
-			} label: {
-				Image(systemName: "xmark")
-					.font(.system(size: 10, weight: .bold))
-					.frame(width: 24, height: 24)
-					.contentShape(Rectangle())
 			}
-			.buttonStyle(.borderless)
-			.help("Remove from Continue")
 		}
 		.padding(.vertical, 4)
 		.padding(.horizontal, 10)
@@ -185,6 +195,7 @@ struct ContinueRow: View {
 		.onTapGesture {
 			sessions.openWatchTab(videoId: entry.videoId)
 		}
+		.onHover { hovering = $0 }
 	}
 }
 
