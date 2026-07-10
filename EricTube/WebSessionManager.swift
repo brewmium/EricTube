@@ -1,7 +1,6 @@
 import WebKit
 
 enum SessionKey: Hashable {
-	case master
 	case music
 	case watch(UUID)
 }
@@ -34,7 +33,10 @@ final class WebSessionManager: ObservableObject {
 	let dataStore: WKWebsiteDataStore = .default()
 	private let processPool = WKProcessPool()
 
-	@Published var active: SessionKey = .master {
+	// A throwaway until init selects a real session; never matches a session.
+	private static let placeholderID = UUID()
+
+	@Published var active: SessionKey = .watch(WebSessionManager.placeholderID) {
 		didSet {
 			if oldValue != active {
 				pauseOnLeave(oldValue)
@@ -83,27 +85,30 @@ final class WebSessionManager: ObservableObject {
 	private var parked: [WKWebView] = []
 
 	private var restoring = false
-	private var masterStartURL = URL(string: "https://www.youtube.com/")!
-	private var masterRestorePaused = false
 
-	// Home base (CREATION.md sect. 4): created once, never torn down by
-	// SwiftUI view churn, so it never reloads or loses its place.
-	private(set) lazy var masterWebView: WKWebView =
-		makeWebView(kind: "master", url: masterStartURL, restorePaused: masterRestorePaused)
+	// Never-hit safety net for activeWebView (the invariant keeps at least one
+	// session alive, so this stays uncreated).
+	private lazy var emergencyWebView: WKWebView =
+		makeWebView(kind: "watch", url: URL(string: "https://www.youtube.com/"))
 
 	init() {
 		NowPlayingBridge.shared.configure()
 		restoreSession()
+		// Every session is a normal, closable one now — no special home base.
+		// Guarantee the list is never empty and the selection resolves.
+		if watchSessions.isEmpty {
+			openTab(path: "/", activate: true)
+		} else if webView(for: active) == nil, let first = watchSessions.first {
+			active = .watch(first.id)
+		}
 	}
 
 	var activeWebView: WKWebView {
-		webView(for: active) ?? masterWebView
+		webView(for: active) ?? watchSessions.first?.webView ?? emergencyWebView
 	}
 
 	private func webView(for key: SessionKey) -> WKWebView? {
 		switch key {
-		case .master:
-			return masterWebView
 		case .music:
 			return musicWebView
 		case .watch(let id):
@@ -132,7 +137,7 @@ final class WebSessionManager: ObservableObject {
 	// Every session that must stay mounted (hidden, not torn down) so
 	// playback and page state survive switching away.
 	var displayed: [DisplayedSession] {
-		var list = [DisplayedSession(key: .master, webView: masterWebView)]
+		var list: [DisplayedSession] = []
 		if let musicWebView {
 			list.append(DisplayedSession(key: .music, webView: musicWebView))
 		}
@@ -222,13 +227,6 @@ final class WebSessionManager: ObservableObject {
 		openTab(path: "/", activate: true)
 	}
 
-	// The master session is the always-present anchor and can't be torn down,
-	// so its close X sends it back to the YouTube home feed (clearing the
-	// current video) rather than removing the row.
-	func goHome() {
-		masterWebView.evaluateJavaScript(Injection.spaNavigate(path: "/"), completionHandler: nil)
-	}
-
 	// Reorder a session within the list (drag to reorder). If the video isn't
 	// an open session, open it (lands on top).
 	func moveSession(_ videoId: String, toIndex: Int) {
@@ -274,15 +272,21 @@ final class WebSessionManager: ObservableObject {
 	}
 
 	func closeWatchTab(_ session: WatchSession) {
+		let wasActive = (active == .watch(session.id))
 		watchSessions.removeAll { $0.id == session.id }
 		audible.remove(ObjectIdentifier(session.webView))
-		if active == .watch(session.id) {
-			active = .master
-		}
 		if parked.isEmpty {
 			// SPA-hop home: stops playback and keeps the view warm.
 			session.webView.evaluateJavaScript(Injection.spaNavigate(path: "/"), completionHandler: nil)
 			parked.append(session.webView)
+		}
+		if watchSessions.isEmpty {
+			// Never leave the list empty — spawn a fresh generic YouTube
+			// session (it becomes active).
+			openTab(path: "/", activate: true)
+		} else if wasActive {
+			// Closing the selected session hands focus to the top one.
+			active = .watch(watchSessions[0].id)
 		}
 		scheduleSnapshot()
 	}
@@ -344,10 +348,8 @@ final class WebSessionManager: ObservableObject {
 	// a relaunch — deliberate or not — can rebuild the moment.
 	private func scheduleSnapshot() {
 		guard !restoring else { return }
-		var activeKey = "master"
+		var activeKey = "tab:0"
 		switch active {
-		case .master:
-			activeKey = "master"
 		case .music:
 			activeKey = "music"
 		case .watch(let id):
@@ -356,7 +358,7 @@ final class WebSessionManager: ObservableObject {
 			}
 		}
 		let snapshot = SessionSnapshot(
-			masterURL: masterWebView.url?.absoluteString,
+			masterURL: nil,   // no special session anymore
 			musicURL: musicWebView?.url?.absoluteString,
 			tabURLs: watchSessions.compactMap { $0.webView.url?.absoluteString },
 			active: activeKey)
@@ -365,10 +367,9 @@ final class WebSessionManager: ObservableObject {
 		}
 	}
 
-	// Everything comes back at its saved position (t=) but paused — no
-	// surprise audio, no Premium stream steal. Master and music get the
-	// same treatment as tabs: watching in the master session is the
-	// common case, not an exception.
+	// Everything comes back at its saved position (t=) but paused (the restore
+	// hold suppresses autoplay). All sessions are equal — the legacy master
+	// URL, if present in an old snapshot, is just restored as the first one.
 	private func restoreSession() {
 		guard let data = UserDefaults.standard.data(forKey: "sessionSnapshot"),
 		      let snapshot = try? JSONDecoder().decode(SessionSnapshot.self, from: data)
@@ -376,27 +377,35 @@ final class WebSessionManager: ObservableObject {
 		restoring = true
 		defer { restoring = false }
 
-		if let master = snapshot.masterURL, let restored = resumeURL(from: master) {
-			masterStartURL = restored.url
-			masterRestorePaused = restored.isWatch
-		}
 		if let music = snapshot.musicURL, let restored = resumeURL(from: music) {
 			musicWebView = makeWebView(kind: "music", url: restored.url, restorePaused: restored.isWatch)
 		}
-		for tabURL in snapshot.tabURLs {
-			guard let restored = resumeURL(from: tabURL) else { continue }
+		// Legacy master URL (old snapshots) becomes the first session.
+		var sessionURLs: [String] = []
+		if let master = snapshot.masterURL { sessionURLs.append(master) }
+		sessionURLs.append(contentsOf: snapshot.tabURLs)
+		for urlString in sessionURLs {
+			guard let restored = resumeURL(from: urlString) else { continue }
 			let webView = makeWebView(kind: "watch", url: restored.url, restorePaused: true)
 			watchSessions.append(WatchSession(webView: webView))
 		}
+		// Restore the selection. Legacy "tab:N"/"master" indices predate the
+		// prepended master session, so offset them by one.
+		let legacyOffset = snapshot.masterURL != nil ? 1 : 0
 		switch snapshot.active {
 		case "music" where musicWebView != nil:
 			active = .music
+		case "master":
+			if let first = watchSessions.first { active = .watch(first.id) }
 		case let key where key.hasPrefix("tab:"):
-			if let index = Int(key.dropFirst(4)), watchSessions.indices.contains(index) {
+			let index = (Int(key.dropFirst(4)) ?? 0) + legacyOffset
+			if watchSessions.indices.contains(index) {
 				active = .watch(watchSessions[index].id)
+			} else if let first = watchSessions.first {
+				active = .watch(first.id)
 			}
 		default:
-			active = .master
+			if let first = watchSessions.first { active = .watch(first.id) }
 		}
 	}
 

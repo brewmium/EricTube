@@ -173,7 +173,7 @@ struct WatchPipelineView: View {
 			VStack(alignment: .leading, spacing: 4) {
 				SectionHeader(
 					icon: "rectangle.stack.badge.play", title: "Sessions",
-					count: 1 + (sessions.musicWebView == nil ? 0 : 1) + sessions.watchSessions.count,
+					count: (sessions.musicWebView == nil ? 0 : 1) + sessions.watchSessions.count,
 					collapsed: $collapseSessions, onModifierClick: handleSessionsModifierClick,
 					onDropVideo: { sessions.moveSession($0, toIndex: 0) }) {
 					Button {
@@ -188,10 +188,6 @@ struct WatchPipelineView: View {
 					.help("New session")
 				}
 				if !collapseSessions {
-					SessionTabRow(sessions: sessions, progress: progress,
-						webView: sessions.masterWebView, key: .master,
-						onClose: { sessions.goHome() })
-						.padding(.leading, 8)
 					if sessions.musicWebView != nil {
 						SessionRow(
 							icon: "music.note", title: "Music",
