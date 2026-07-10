@@ -149,7 +149,7 @@ enum Injection {
 		if (window.__erictubeTheater) { return; }
 		window.__erictubeTheater = true;
 		function enforce() {
-			if (!window.__erictubePreferTheater) { return; }
+			if (window.__erictubePreferTheater === false) { return; }
 			if (location.pathname !== '/watch') { return; }
 			let tries = 0;
 			const timer = setInterval(function () {
@@ -311,10 +311,20 @@ enum Injection {
 		(function () {
 			window.__erictubePreferTheater = \(want);
 			if (location.pathname !== '/watch') { return; }
-			const flexy = document.querySelector('ytd-watch-flexy');
-			const btn = document.querySelector('.ytp-size-button');
-			if (!flexy || !btn) { return; }
-			if (\(want) !== flexy.hasAttribute('theater')) { btn.click(); }
+			// The size button isn't always mounted the instant we toggle (a
+			// restored/paused player mounts its controls late), so poll for it.
+			let tries = 0;
+			const timer = setInterval(function () {
+				tries += 1;
+				const flexy = document.querySelector('ytd-watch-flexy');
+				const btn = document.querySelector('.ytp-size-button');
+				if (flexy && btn) {
+					clearInterval(timer);
+					if (\(want) !== flexy.hasAttribute('theater')) { btn.click(); }
+				} else if (tries > 40) {
+					clearInterval(timer);
+				}
+			}, 100);
 		})();
 		"""
 	}
