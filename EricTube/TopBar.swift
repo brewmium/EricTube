@@ -5,8 +5,9 @@ import WebKit
 // Left to right: traffic lights, rail toggle, soft divider, jump-to cluster
 // (watch list, favorite video lists, music, favorite music lists), stronger
 // divider, back/forward, background-play toggle, then the active session's
-// URL (read-only, selectable) and the three-dot menu. Session/tab
-// switching lives in the rail's Watch segment.
+// URL (read-only, selectable) with a copy button at its end, and the
+// open-in-browser and settings icons. Session/tab switching lives in the
+// rail's Watch segment.
 struct TopBar: View {
 	@ObservedObject var sessions: WebSessionManager
 	@AppStorage("railCollapsed") private var collapsed = false
@@ -53,14 +54,22 @@ struct TopBar: View {
 				sessions.playInBackground.toggle()
 			}
 			barDivider(28)
-			URLDisplay(sessions: sessions)
-				.id(sessions.active)
-				.frame(maxWidth: .infinity, alignment: .leading)
-			CopyURLButton(sessions: sessions)
-			BarMenu(sessions: sessions, showSettings: $showSettings)
-				.popover(isPresented: $showSettings, arrowEdge: .bottom) {
-					SettingsView(sessions: sessions)
-				}
+			HStack(spacing: 4) {
+				URLDisplay(sessions: sessions)
+					.id(sessions.active)
+				CopyURLButton(sessions: sessions)
+			}
+			.frame(maxWidth: .infinity, alignment: .leading)
+			IconButton("safari", help: "Open in Browser") {
+				guard let url = sessions.activeWebView.url else { return }
+				NSWorkspace.shared.open(url)
+			}
+			IconButton("gearshape", help: "Settings", active: showSettings) {
+				showSettings.toggle()
+			}
+			.popover(isPresented: $showSettings, arrowEdge: .bottom) {
+				SettingsView(sessions: sessions)
+			}
 		}
 		.padding(.leading, 8)
 		.padding(.trailing, 10)
@@ -143,31 +152,6 @@ struct CopyURLButton: View {
 		}
 		.buttonStyle(.borderless)
 		.help("Copy URL")
-	}
-}
-
-// Top-bar three-dot menu: page-level utilities for the active session.
-struct BarMenu: View {
-	@ObservedObject var sessions: WebSessionManager
-	@Binding var showSettings: Bool
-
-	var body: some View {
-		Menu {
-			Button("Open in Browser") {
-				guard let url = sessions.activeWebView.url else { return }
-				NSWorkspace.shared.open(url)
-			}
-			Divider()
-			Button("Settings\u{2026}") { showSettings = true }
-		} label: {
-			Image(systemName: "ellipsis")
-				.font(.system(size: 20))
-				.foregroundStyle(Color.primary.opacity(0.85))
-				.frame(width: 30, height: 30)
-		}
-		.menuStyle(.borderlessButton)
-		.menuIndicator(.hidden)
-		.frame(width: 34)
 	}
 }
 
