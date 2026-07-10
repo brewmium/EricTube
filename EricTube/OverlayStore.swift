@@ -146,6 +146,38 @@ final class OverlayStore: ObservableObject {
 		persist()
 	}
 
+	// File a video into a tier at the TOP of that tier's list (drop on the
+	// tier header). Moving within the videos array reorders what inTier shows.
+	func fileToTierTop(videoId: String, tier: Tier) {
+		save(videoId: videoId, tier: tier)
+		guard let from = videos.firstIndex(where: { $0.videoId == videoId }) else { return }
+		let moving = videos.remove(at: from)
+		if let firstOfTier = videos.firstIndex(where: { $0.tier == tier && !$0.archived }) {
+			videos.insert(moving, at: firstOfTier)
+		} else {
+			videos.insert(moving, at: 0)
+		}
+		persist()
+	}
+
+	// Reorder a video within its tier to a display index (drag between items).
+	func reorderInTier(videoId: String, tier: Tier, toIndex: Int) {
+		save(videoId: videoId, tier: tier)
+		guard let from = videos.firstIndex(where: { $0.videoId == videoId }) else { return }
+		let moving = videos.remove(at: from)
+		let tierNow = videos.filter { $0.tier == tier && !$0.archived }
+		if toIndex < tierNow.count,
+		   let at = videos.firstIndex(where: { $0.videoId == tierNow[toIndex].videoId }) {
+			videos.insert(moving, at: at)
+		} else if let last = tierNow.last,
+		          let at = videos.firstIndex(where: { $0.videoId == last.videoId }) {
+			videos.insert(moving, at: at + 1)
+		} else {
+			videos.append(moving)
+		}
+		persist()
+	}
+
 	func setTier(_ videoId: String, to tier: Tier?) {
 		guard let index = videos.firstIndex(where: { $0.videoId == videoId }) else { return }
 		videos[index].tier = tier

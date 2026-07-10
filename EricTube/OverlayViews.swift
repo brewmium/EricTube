@@ -1,5 +1,74 @@
 import SwiftUI
 import WebKit
+import UniformTypeIdentifiers
+
+// Where a dragged video would land: the target section and the insertion
+// index between its rows. Drives the insertion line.
+struct DropIndicator: Equatable {
+	let section: String
+	let index: Int
+}
+
+// A reorderable row: reports where a hovering drag would insert (top half of
+// the row -> before it, bottom half -> after it) and moves the video there on
+// drop. Used for Sessions and tier rows.
+private struct ReorderableRow: ViewModifier {
+	let section: String
+	let index: Int
+	@Binding var indicator: DropIndicator?
+	let onMove: (String, Int) -> Void
+	@State private var height: CGFloat = 44
+
+	func body(content: Content) -> some View {
+		content
+			.background(GeometryReader { geo in
+				Color.clear
+					.onAppear { height = geo.size.height }
+					.onChange(of: geo.size.height) { height = $0 }
+			})
+			.onDrop(of: [.plainText], delegate: ReorderDrop(
+				section: section, index: index, height: height,
+				indicator: $indicator, onMove: onMove))
+	}
+}
+
+private struct ReorderDrop: DropDelegate {
+	let section: String
+	let index: Int
+	let height: CGFloat
+	@Binding var indicator: DropIndicator?
+	let onMove: (String, Int) -> Void
+
+	func validateDrop(info: DropInfo) -> Bool {
+		info.hasItemsConforming(to: [.plainText])
+	}
+
+	func dropEntered(info: DropInfo) { indicator = slot(info) }
+	func dropUpdated(info: DropInfo) -> DropProposal? {
+		indicator = slot(info)
+		return DropProposal(operation: .move)
+	}
+
+	private func slot(_ info: DropInfo) -> DropIndicator {
+		DropIndicator(section: section, index: info.location.y > height / 2 ? index + 1 : index)
+	}
+
+	func performDrop(info: DropInfo) -> Bool {
+		let target = slot(info).index
+		guard let provider = info.itemProviders(for: [.plainText]).first else {
+			indicator = nil
+			return false
+		}
+		_ = provider.loadObject(ofClass: NSString.self) { object, _ in
+			guard let videoId = object as? String, !videoId.isEmpty else { return }
+			Task { @MainActor in
+				onMove(videoId, target)
+				indicator = nil
+			}
+		}
+		return true
+	}
+}
 
 // A collapsible section header for the Watch list: a disclosure chevron +
 // icon + title + count, with an optional trailing accessory (the Sessions "+").
@@ -97,6 +166,7 @@ struct WatchPipelineView: View {
 	@AppStorage("watchCollapse.later") private var collapseLater = false
 	@AppStorage("watchCollapse.maybe") private var collapseMaybe = false
 	@AppStorage("watchCollapse.history") private var collapseHistory = false
+	@State private var dropIndicator: DropIndicator?
 
 	var body: some View {
 		ScrollView {
@@ -105,7 +175,7 @@ struct WatchPipelineView: View {
 					icon: "rectangle.stack.badge.play", title: "Sessions",
 					count: 1 + (sessions.musicWebView == nil ? 0 : 1) + sessions.watchSessions.count,
 					collapsed: $collapseSessions, onModifierClick: handleSessionsModifierClick,
-					onDropVideo: openInSessions) {
+					onDropVideo: { sessions.moveSession($0, toIndex: 0) }) {
 					Button {
 						sessions.newSession()
 					} label: {
@@ -119,7 +189,8 @@ struct WatchPipelineView: View {
 				}
 				if !collapseSessions {
 					SessionTabRow(sessions: sessions, progress: progress,
-						webView: sessions.masterWebView, key: .master, onClose: nil)
+						webView: sessions.masterWebView, key: .master,
+						onClose: { sessions.goHome() })
 						.padding(.leading, 8)
 					if sessions.musicWebView != nil {
 						SessionRow(
@@ -130,11 +201,16 @@ struct WatchPipelineView: View {
 							close: nil)
 							.padding(.leading, 8)
 					}
-					ForEach(sessions.watchSessions) { session in
+					insertionLine("sessions", 0)
+					ForEach(Array(sessions.watchSessions.enumerated()), id: \.element.id) { offset, session in
 						SessionTabRow(sessions: sessions, progress: progress,
 							webView: session.webView, key: .watch(session.id),
 							onClose: { sessions.closeWatchTab(session) })
 							.padding(.leading, 8)
+							.modifier(ReorderableRow(section: "sessions", index: offset,
+								indicator: $dropIndicator,
+								onMove: { sessions.moveSession($0, toIndex: $1) }))
+						insertionLine("sessions", offset + 1)
 					}
 				}
 				let openIds = Set(sessions.watchSessions.compactMap { sessions.currentVideoId(of: $0.webView) })
@@ -160,8 +236,13 @@ struct WatchPipelineView: View {
 						collapsed: collapsed, onModifierClick: handleOtherModifierClick,
 						onDropVideo: { fileVideo($0, into: tier) })
 					if !collapsed.wrappedValue {
-						ForEach(items) { video in
+						insertionLine(tier.rawValue, 0)
+						ForEach(Array(items.enumerated()), id: \.element.id) { offset, video in
 							SavedVideoRow(sessions: sessions, store: store, video: video)
+								.modifier(ReorderableRow(section: tier.rawValue, index: offset,
+									indicator: $dropIndicator,
+									onMove: { moveIntoTier($0, tier: tier, toIndex: $1) }))
+							insertionLine(tier.rawValue, offset + 1)
 						}
 						if items.isEmpty {
 							Text("empty")
@@ -220,18 +301,28 @@ struct WatchPipelineView: View {
 
 	// MARK: - Drag between sections (drop a video onto a section header)
 
-	// Drop on a tier: file it there (moving between tiers just resets the
-	// tier), and if it's a live session, close it — it left the live list.
+	// Insertion line between rows — visible only where a drag would land.
+	private func insertionLine(_ section: String, _ index: Int) -> some View {
+		Rectangle()
+			.fill(Color.accentColor)
+			.frame(height: 2)
+			.padding(.horizontal, 10)
+			.opacity(dropIndicator == DropIndicator(section: section, index: index) ? 1 : 0)
+	}
+
+	// Drop on a tier header: file it at the top of that tier (moving between
+	// tiers just re-tiers it); if it's a live session, close it.
 	private func fileVideo(_ videoId: String, into tier: Tier) {
 		guard !videoId.isEmpty else { return }
-		store.save(videoId: videoId, tier: tier)
+		store.fileToTierTop(videoId: videoId, tier: tier)
 		sessions.closeSession(forVideoId: videoId)
 	}
 
-	// Drop on Sessions: open it live (additive — doesn't unfile).
-	private func openInSessions(_ videoId: String) {
+	// Drop between tier rows: file at that position.
+	private func moveIntoTier(_ videoId: String, tier: Tier, toIndex: Int) {
 		guard !videoId.isEmpty else { return }
-		sessions.openWatchTab(videoId: videoId)
+		store.reorderInTier(videoId: videoId, tier: tier, toIndex: toIndex)
+		sessions.closeSession(forVideoId: videoId)
 	}
 
 	// Drop on Continue: back to plain in-progress — unfile from its tier and

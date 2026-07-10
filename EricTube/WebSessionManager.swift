@@ -222,6 +222,30 @@ final class WebSessionManager: ObservableObject {
 		openTab(path: "/", activate: true)
 	}
 
+	// The master session is the always-present anchor and can't be torn down,
+	// so its close X sends it back to the YouTube home feed (clearing the
+	// current video) rather than removing the row.
+	func goHome() {
+		masterWebView.evaluateJavaScript(Injection.spaNavigate(path: "/"), completionHandler: nil)
+	}
+
+	// Reorder a session within the list (drag to reorder). If the video isn't
+	// an open session, open it (lands on top).
+	func moveSession(_ videoId: String, toIndex: Int) {
+		guard let from = watchSessions.firstIndex(where: {
+			currentVideoId(of: $0.webView) == videoId
+		}) else {
+			openWatchTab(videoId: videoId)
+			return
+		}
+		let session = watchSessions.remove(at: from)
+		var target = toIndex
+		if from < target { target -= 1 }
+		target = max(0, min(watchSessions.count, target))
+		watchSessions.insert(session, at: target)
+		scheduleSnapshot()
+	}
+
 	func isAudible(_ webView: WKWebView?) -> Bool {
 		guard let webView else { return false }
 		return audible.contains(ObjectIdentifier(webView))
