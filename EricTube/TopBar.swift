@@ -13,6 +13,7 @@ struct TopBar: View {
 	@AppStorage("railCollapsed") private var collapsed = false
 	@AppStorage("railSegment") private var segment = "watch"
 	@State private var showSettings = false
+	@State private var urlHovering = false
 
 	var body: some View {
 		HStack(spacing: 16) {
@@ -58,8 +59,10 @@ struct TopBar: View {
 				URLDisplay(sessions: sessions)
 					.id(sessions.active)
 				CopyURLButton(sessions: sessions)
+					.opacity(urlHovering ? 1 : 0)
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)
+			.onHover { urlHovering = $0 }
 			IconButton("safari", help: "Open in Browser") {
 				guard let url = sessions.activeWebView.url else { return }
 				NSWorkspace.shared.open(url)
@@ -122,7 +125,7 @@ struct URLDisplay: View {
 
 	var body: some View {
 		Text(urlString)
-			.font(.system(size: 15))
+			.font(.system(size: 17))
 			.foregroundStyle(.secondary)
 			.lineLimit(1)
 			.truncationMode(.middle)

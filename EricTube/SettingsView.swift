@@ -45,6 +45,7 @@ struct SettingsView: View {
 					.font(.system(size: 11))
 					.foregroundStyle(.secondary)
 			}
+			.frame(maxWidth: .infinity, alignment: .leading)
 		}
 		.toggleStyle(.switch)
 	}
