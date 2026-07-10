@@ -69,6 +69,17 @@ enum Injection {
 			return null;
 		}
 
+		// Thumbnail rect if we can find one, else the link's own box — covers
+		// the video-end suggestion cards and autoplay overlays, which are big
+		// watch anchors with no inner thumbnail <img>.
+		function rectFor(link, id) {
+			const t = thumbRectFor(link, id);
+			if (t) { return t; }
+			const r = link.getBoundingClientRect();
+			if (r.width >= 80 && r.height >= 45) { return r; }
+			return null;
+		}
+
 		// Anywhere in a video cell counts: a watch anchor directly, or any
 		// element inside a known tile container.
 		function resolve(el) {
@@ -76,13 +87,13 @@ enum Injection {
 			const a = el.closest(LINKS);
 			if (a) {
 				const id = videoIdOf(a);
-				if (id) { return { id: id, rect: thumbRectFor(a, id) }; }
+				if (id) { return { id: id, rect: rectFor(a, id) }; }
 			}
 			const tile = el.closest(TILES);
 			if (tile) {
 				for (const link of tile.querySelectorAll(LINKS)) {
 					const id = videoIdOf(link);
-					if (id) { return { id: id, rect: thumbRectFor(link, id) }; }
+					if (id) { return { id: id, rect: rectFor(link, id) }; }
 				}
 			}
 			return null;

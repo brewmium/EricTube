@@ -9,34 +9,37 @@ struct SectionHeader<Trailing: View>: View {
 	let title: String
 	let count: Int
 	@Binding var collapsed: Bool
-	var onCommandClick: (() -> Void)?
+	// Passed the section's collapsed state at click time (so the caller can
+	// expand-all when a closed section is modifier-clicked, else collapse-all).
+	var onModifierClick: ((Bool) -> Void)?
 	let trailing: Trailing
 
 	init(icon: String, title: String, count: Int, collapsed: Binding<Bool>,
-	     onCommandClick: (() -> Void)? = nil,
+	     onModifierClick: ((Bool) -> Void)? = nil,
 	     @ViewBuilder trailing: () -> Trailing) {
 		self.icon = icon
 		self.title = title
 		self.count = count
 		self._collapsed = collapsed
-		self.onCommandClick = onCommandClick
+		self.onModifierClick = onModifierClick
 		self.trailing = trailing()
 	}
 
 	var body: some View {
 		HStack(spacing: 6) {
 			Button {
-				if let onCommandClick, NSEvent.modifierFlags.contains(.command) {
-					onCommandClick()
+				let mods = NSEvent.modifierFlags
+				if let onModifierClick, mods.contains(.command) || mods.contains(.option) {
+					onModifierClick(collapsed)
 				} else {
 					collapsed.toggle()
 				}
 			} label: {
 				HStack(spacing: 6) {
 					Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-						.font(.system(size: 9, weight: .bold))
+						.font(.system(size: 12, weight: .bold))
 						.foregroundStyle(.tertiary)
-						.frame(width: 10)
+						.frame(width: 14)
 					Image(systemName: icon)
 					Text(title)
 					Text("\(count)")
@@ -48,7 +51,7 @@ struct SectionHeader<Trailing: View>: View {
 			Spacer(minLength: 0)
 			trailing
 		}
-		.font(.system(size: 13, weight: .semibold))
+		.font(.system(size: 15, weight: .semibold))
 		.foregroundStyle(.secondary)
 		.padding(.top, 10)
 		.padding(.horizontal, 10)
@@ -57,9 +60,9 @@ struct SectionHeader<Trailing: View>: View {
 
 extension SectionHeader where Trailing == EmptyView {
 	init(icon: String, title: String, count: Int, collapsed: Binding<Bool>,
-	     onCommandClick: (() -> Void)? = nil) {
+	     onModifierClick: ((Bool) -> Void)? = nil) {
 		self.init(icon: icon, title: title, count: count, collapsed: collapsed,
-			onCommandClick: onCommandClick) { EmptyView() }
+			onModifierClick: onModifierClick) { EmptyView() }
 	}
 }
 
@@ -84,7 +87,7 @@ struct WatchPipelineView: View {
 				SectionHeader(
 					icon: "rectangle.stack.badge.play", title: "Sessions",
 					count: 1 + (sessions.musicWebView == nil ? 0 : 1) + sessions.watchSessions.count,
-					collapsed: $collapseSessions, onCommandClick: expandAll) {
+					collapsed: $collapseSessions, onModifierClick: handleModifierClick) {
 					Button {
 						sessions.newSession()
 					} label: {
@@ -120,7 +123,7 @@ struct WatchPipelineView: View {
 				let continuing = progress.inProgress.filter { !openIds.contains($0.videoId) }
 				if !continuing.isEmpty {
 					SectionHeader(icon: "memories", title: "Continue", count: continuing.count,
-						collapsed: $collapseContinue, onCommandClick: collapseAllButSessions)
+						collapsed: $collapseContinue, onModifierClick: handleModifierClick)
 					if !collapseContinue {
 						ForEach(continuing) { entry in
 							ContinueRow(sessions: sessions, progress: progress, entry: entry)
@@ -131,7 +134,7 @@ struct WatchPipelineView: View {
 					let items = store.inTier(tier)
 					let collapsed = tierCollapsed(tier)
 					SectionHeader(icon: tier.icon, title: tier.displayName, count: items.count,
-						collapsed: collapsed, onCommandClick: collapseAllButSessions)
+						collapsed: collapsed, onModifierClick: handleModifierClick)
 					if !collapsed.wrappedValue {
 						ForEach(items) { video in
 							SavedVideoRow(sessions: sessions, store: store, video: video)
@@ -148,7 +151,7 @@ struct WatchPipelineView: View {
 				if !history.isEmpty {
 					SectionHeader(icon: "clock.arrow.circlepath", title: "Previously Watched",
 						count: history.count, collapsed: $collapseHistory,
-						onCommandClick: collapseAllButSessions)
+						onModifierClick: handleModifierClick)
 					if !collapseHistory {
 						ForEach(history) { entry in
 							HistoryRow(sessions: sessions, progress: progress, entry: entry)
@@ -168,24 +171,24 @@ struct WatchPipelineView: View {
 		}
 	}
 
-	// Cmd-click a non-Sessions header: focus on live sessions, fold the rest.
-	private func collapseAllButSessions() {
-		collapseSessions = false
-		collapseContinue = true
-		collapseNext = true
-		collapseLater = true
-		collapseMaybe = true
-		collapseHistory = true
+	// Cmd/Option-click any header: if the clicked section was closed, open
+	// everything; otherwise fold everything but Sessions.
+	private func handleModifierClick(wasCollapsed: Bool) {
+		if wasCollapsed {
+			setAllCollapsed(false)
+		} else {
+			setAllCollapsed(true)
+			collapseSessions = false
+		}
 	}
 
-	// Cmd-click the Sessions header: undo — open everything back up.
-	private func expandAll() {
-		collapseSessions = false
-		collapseContinue = false
-		collapseNext = false
-		collapseLater = false
-		collapseMaybe = false
-		collapseHistory = false
+	private func setAllCollapsed(_ value: Bool) {
+		collapseSessions = value
+		collapseContinue = value
+		collapseNext = value
+		collapseLater = value
+		collapseMaybe = value
+		collapseHistory = value
 	}
 }
 

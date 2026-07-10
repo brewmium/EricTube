@@ -8,7 +8,7 @@ struct ContentView: View {
 
 	var body: some View {
 		VStack(spacing: 0) {
-			TopBar(sessions: sessions)
+			TopBar(sessions: sessions, store: store)
 			Divider()
 			HStack(spacing: 0) {
 				if !collapsed {

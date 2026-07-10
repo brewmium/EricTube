@@ -10,6 +10,7 @@ import WebKit
 // rail's Watch segment.
 struct TopBar: View {
 	@ObservedObject var sessions: WebSessionManager
+	@ObservedObject var store: OverlayStore
 	@AppStorage("railCollapsed") private var collapsed = false
 	@AppStorage("railSegment") private var segment = "watch"
 	@State private var showSettings = false
@@ -63,6 +64,8 @@ struct TopBar: View {
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)
 			.onHover { urlHovering = $0 }
+			AddToListButton(sessions: sessions, store: store)
+				.id(sessions.active)
 			IconButton("safari", help: "Open in Browser") {
 				guard let url = sessions.activeWebView.url else { return }
 				NSWorkspace.shared.open(url)
@@ -182,6 +185,43 @@ struct CopyURLButton: View {
 		}
 		.buttonStyle(.borderless)
 		.tooltip("Copy URL")
+	}
+}
+
+// Saves the active session's current video into a saved list, via the same
+// genre -> list -> sub-list hierarchy picker used everywhere else — so you
+// file what you're watching into the real tree, children and all.
+struct AddToListButton: View {
+	@ObservedObject var sessions: WebSessionManager
+	@ObservedObject var store: OverlayStore
+	@State private var videoId: String?
+	@State private var showPicker = false
+
+	var body: some View {
+		Button {
+			showPicker = true
+		} label: {
+			Image(systemName: "text.badge.plus")
+				.font(.system(size: 20))
+				.foregroundStyle(videoId == nil
+					? Color.primary.opacity(0.3)
+					: Color.primary.opacity(0.85))
+				.frame(width: 30, height: 30)
+		}
+		.buttonStyle(.borderless)
+		.disabled(videoId == nil || store.lists.isEmpty)
+		.tooltip("Add this video to a list")
+		.popover(isPresented: $showPicker, arrowEdge: .bottom) {
+			ListPickerView(store: store, allowGenrePick: false) { destination in
+				if case .list(let listId) = destination, let videoId {
+					store.addToList(videoId, listId: listId)
+				}
+				showPicker = false
+			}
+		}
+		.onReceive(sessions.activeWebView.publisher(for: \.url)) { _ in
+			videoId = sessions.currentVideoId(of: sessions.activeWebView)
+		}
 	}
 }
 
