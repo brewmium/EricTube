@@ -112,7 +112,34 @@ struct IconButton: View {
 				.frame(width: 30, height: 30)
 		}
 		.buttonStyle(.borderless)
-		.help(help)
+		.tooltip(help)
+	}
+}
+
+// AppKit-backed tooltip: shows for every icon, including disabled ones (where
+// SwiftUI's .help stays silent), and reliably under the hidden-titlebar drag
+// bar. The overlay passes clicks straight through to the button beneath.
+struct TooltipOverlay: NSViewRepresentable {
+	let text: String
+
+	func makeNSView(context: Context) -> NSView {
+		let view = PassThroughView()
+		view.toolTip = text
+		return view
+	}
+
+	func updateNSView(_ nsView: NSView, context: Context) {
+		nsView.toolTip = text
+	}
+
+	private final class PassThroughView: NSView {
+		override func hitTest(_ point: NSPoint) -> NSView? { nil }
+	}
+}
+
+extension View {
+	func tooltip(_ text: String) -> some View {
+		overlay(TooltipOverlay(text: text))
 	}
 }
 
@@ -154,7 +181,7 @@ struct CopyURLButton: View {
 				.frame(width: 30, height: 30)
 		}
 		.buttonStyle(.borderless)
-		.help("Copy URL")
+		.tooltip("Copy URL")
 	}
 }
 
