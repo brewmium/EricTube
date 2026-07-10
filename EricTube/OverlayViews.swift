@@ -1,67 +1,149 @@
 import SwiftUI
 
-// Rail segment: the whole "watching" world. Live sessions (home, music,
-// open tabs — with progress where started, blank where not) blend with
-// Continue (in-progress videos not currently open), then the three tiers.
+// A collapsible section header for the Watch list: a disclosure chevron +
+// icon + title + count, with an optional trailing accessory (the Sessions "+").
+// Collapse state is owned by the caller (persisted via @AppStorage).
+struct SectionHeader<Trailing: View>: View {
+	let icon: String
+	let title: String
+	let count: Int
+	@Binding var collapsed: Bool
+	let trailing: Trailing
+
+	init(icon: String, title: String, count: Int, collapsed: Binding<Bool>,
+	     @ViewBuilder trailing: () -> Trailing) {
+		self.icon = icon
+		self.title = title
+		self.count = count
+		self._collapsed = collapsed
+		self.trailing = trailing()
+	}
+
+	var body: some View {
+		HStack(spacing: 6) {
+			Button {
+				collapsed.toggle()
+			} label: {
+				HStack(spacing: 6) {
+					Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+						.font(.system(size: 9, weight: .bold))
+						.foregroundStyle(.tertiary)
+						.frame(width: 10)
+					Image(systemName: icon)
+					Text(title)
+					Text("\(count)")
+						.foregroundStyle(.tertiary)
+				}
+				.contentShape(Rectangle())
+			}
+			.buttonStyle(.plain)
+			Spacer(minLength: 0)
+			trailing
+		}
+		.font(.system(size: 13, weight: .semibold))
+		.foregroundStyle(.secondary)
+		.padding(.top, 10)
+		.padding(.horizontal, 10)
+	}
+}
+
+extension SectionHeader where Trailing == EmptyView {
+	init(icon: String, title: String, count: Int, collapsed: Binding<Bool>) {
+		self.init(icon: icon, title: title, count: count, collapsed: collapsed) { EmptyView() }
+	}
+}
+
+// Rail segment: the whole "watching" world. Live sessions (home, music, open
+// tabs — with progress where started, blank where not) blend with Continue
+// (in-progress, unfiled), then the three tiers, then Previously Watched. Each
+// section twists closed; collapse state persists.
 struct WatchPipelineView: View {
 	@ObservedObject var sessions: WebSessionManager
 	@ObservedObject var store: OverlayStore
 	@ObservedObject private var progress = ProgressStore.shared
+	@AppStorage("watchCollapse.sessions") private var collapseSessions = false
+	@AppStorage("watchCollapse.continue") private var collapseContinue = false
+	@AppStorage("watchCollapse.next") private var collapseNext = false
+	@AppStorage("watchCollapse.later") private var collapseLater = false
+	@AppStorage("watchCollapse.maybe") private var collapseMaybe = false
+	@AppStorage("watchCollapse.history") private var collapseHistory = false
 
 	var body: some View {
 		ScrollView {
 			VStack(alignment: .leading, spacing: 4) {
-				sectionHeader(icon: "rectangle.stack.badge.play", title: "Sessions",
-					count: 1 + (sessions.musicWebView == nil ? 0 : 1) + sessions.watchSessions.count)
-				SessionRow(
-					icon: "house", title: "Home",
-					selected: sessions.active == .master,
-					audible: sessions.isAudible(sessions.masterWebView),
-					select: { sessions.active = .master },
-					close: nil)
-					.padding(.leading, 8)
-				if sessions.musicWebView != nil {
+				SectionHeader(
+					icon: "rectangle.stack.badge.play", title: "Sessions",
+					count: 1 + (sessions.musicWebView == nil ? 0 : 1) + sessions.watchSessions.count,
+					collapsed: $collapseSessions) {
+					Button {
+						sessions.newSession()
+					} label: {
+						Image(systemName: "plus")
+							.font(.system(size: 14, weight: .bold))
+							.frame(width: 24, height: 24)
+							.contentShape(Rectangle())
+					}
+					.buttonStyle(.plain)
+					.help("New session")
+				}
+				if !collapseSessions {
 					SessionRow(
-						icon: "music.note", title: "Music",
-						selected: sessions.active == .music,
-						audible: sessions.isAudible(sessions.musicWebView),
-						select: { sessions.showMusic() },
+						icon: "house", title: "Home",
+						selected: sessions.active == .master,
+						audible: sessions.isAudible(sessions.masterWebView),
+						select: { sessions.active = .master },
 						close: nil)
 						.padding(.leading, 8)
-				}
-				ForEach(sessions.watchSessions) { session in
-					TabSessionRow(sessions: sessions, progress: progress, session: session)
-						.padding(.leading, 8)
+					if sessions.musicWebView != nil {
+						SessionRow(
+							icon: "music.note", title: "Music",
+							selected: sessions.active == .music,
+							audible: sessions.isAudible(sessions.musicWebView),
+							select: { sessions.showMusic() },
+							close: nil)
+							.padding(.leading, 8)
+					}
+					ForEach(sessions.watchSessions) { session in
+						TabSessionRow(sessions: sessions, progress: progress, session: session)
+							.padding(.leading, 8)
+					}
 				}
 				let openIds = Set(sessions.watchSessions.compactMap { sessions.currentVideoId(of: $0.webView) })
 				let continuing = progress.inProgress.filter { !openIds.contains($0.videoId) }
 				if !continuing.isEmpty {
-					sectionHeader(icon: "memories", title: "Continue", count: continuing.count)
-					ForEach(continuing) { entry in
-						ContinueRow(sessions: sessions, progress: progress, entry: entry)
+					SectionHeader(icon: "memories", title: "Continue", count: continuing.count,
+						collapsed: $collapseContinue)
+					if !collapseContinue {
+						ForEach(continuing) { entry in
+							ContinueRow(sessions: sessions, progress: progress, entry: entry)
+						}
 					}
 				}
 				ForEach(Tier.allCases) { tier in
 					let items = store.inTier(tier)
-					HStack(spacing: 6) {
-						Image(systemName: tier.icon)
-						Text(tier.displayName)
-						Text("\(items.count)")
-							.foregroundStyle(.tertiary)
-						Spacer(minLength: 0)
+					let collapsed = tierCollapsed(tier)
+					SectionHeader(icon: tier.icon, title: tier.displayName, count: items.count,
+						collapsed: collapsed)
+					if !collapsed.wrappedValue {
+						ForEach(items) { video in
+							SavedVideoRow(sessions: sessions, store: store, video: video)
+						}
+						if items.isEmpty {
+							Text("empty")
+								.font(.system(size: 12))
+								.foregroundStyle(.quaternary)
+								.padding(.leading, 12)
+						}
 					}
-					.font(.system(size: 13, weight: .semibold))
-					.foregroundStyle(.secondary)
-					.padding(.top, 10)
-					.padding(.horizontal, 10)
-					ForEach(items) { video in
-						SavedVideoRow(sessions: sessions, store: store, video: video)
-					}
-					if items.isEmpty {
-						Text("empty")
-							.font(.system(size: 12))
-							.foregroundStyle(.quaternary)
-							.padding(.leading, 12)
+				}
+				let history = progress.watched
+				if !history.isEmpty {
+					SectionHeader(icon: "clock.arrow.circlepath", title: "Previously Watched",
+						count: history.count, collapsed: $collapseHistory)
+					if !collapseHistory {
+						ForEach(history) { entry in
+							HistoryRow(sessions: sessions, progress: progress, entry: entry)
+						}
 					}
 				}
 			}
@@ -69,18 +151,12 @@ struct WatchPipelineView: View {
 		}
 	}
 
-	private func sectionHeader(icon: String, title: String, count: Int) -> some View {
-		HStack(spacing: 6) {
-			Image(systemName: icon)
-			Text(title)
-			Text("\(count)")
-				.foregroundStyle(.tertiary)
-			Spacer(minLength: 0)
+	private func tierCollapsed(_ tier: Tier) -> Binding<Bool> {
+		switch tier {
+		case .next: return $collapseNext
+		case .later: return $collapseLater
+		case .maybe: return $collapseMaybe
 		}
-		.font(.system(size: 13, weight: .semibold))
-		.foregroundStyle(.secondary)
-		.padding(.top, 10)
-		.padding(.horizontal, 10)
 	}
 }
 
@@ -201,6 +277,39 @@ struct ContinueRow: View {
 		.overlay(alignment: .trailing) {
 			RowCloseButton(help: "Remove from Continue", visible: hovering) {
 				progress.dismiss(entry.videoId)
+			}
+		}
+		.onTapGesture {
+			sessions.openWatchTab(videoId: entry.videoId)
+		}
+		.onHover { hovering = $0 }
+	}
+}
+
+// A finished video in the local watch history: dimmed title, reopen on tap,
+// X to delete the record outright (history is ours to prune, unlike Continue's
+// dismiss which only marks done).
+struct HistoryRow: View {
+	@ObservedObject var sessions: WebSessionManager
+	@ObservedObject var progress: ProgressStore
+	let entry: WatchProgress
+	@State private var hovering = false
+
+	var body: some View {
+		HStack(alignment: .center, spacing: 6) {
+			Text(entry.title)
+				.font(.system(size: 14))
+				.lineLimit(2)
+				.foregroundStyle(.secondary)
+				.frame(maxWidth: .infinity, alignment: .leading)
+				.padding(.trailing, 16)
+		}
+		.padding(.vertical, 4)
+		.padding(.horizontal, 10)
+		.contentShape(Rectangle())
+		.overlay(alignment: .trailing) {
+			RowCloseButton(help: "Delete from history", visible: hovering) {
+				progress.delete(entry.videoId)
 			}
 		}
 		.onTapGesture {

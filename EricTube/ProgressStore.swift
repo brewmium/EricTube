@@ -25,6 +25,13 @@ final class ProgressStore: ObservableObject {
 
 	@Published private(set) var records: [String: WatchProgress] = [:]
 
+	// A video counts as watched once it's within this many seconds of the end
+	// (default 10) — so near-finished videos leave Continue for the history
+	// instead of forcing manual cleanup. Tunable in Settings.
+	static var watchedThreshold: Double {
+		UserDefaults.standard.object(forKey: "watchedThreshold") as? Double ?? 10
+	}
+
 	private let fileURL: URL
 
 	init() {
@@ -60,7 +67,7 @@ final class ProgressStore: ObservableObject {
 		entry.seconds = seconds
 		entry.duration = duration
 		entry.lastWatchedAt = Date()
-		if entry.fraction > 0.93 {
+		if entry.duration - entry.seconds <= Self.watchedThreshold {
 			entry.completed = true
 		}
 		records[videoId] = entry
@@ -71,6 +78,13 @@ final class ProgressStore: ObservableObject {
 	var inProgress: [WatchProgress] {
 		records.values
 			.filter { !$0.completed && $0.seconds > 15 }
+			.sorted { $0.lastWatchedAt > $1.lastWatchedAt }
+	}
+
+	// The local watch history: finished videos, most recent first.
+	var watched: [WatchProgress] {
+		records.values
+			.filter { $0.completed }
 			.sorted { $0.lastWatchedAt > $1.lastWatchedAt }
 	}
 
@@ -85,6 +99,12 @@ final class ProgressStore: ObservableObject {
 		guard var entry = records[videoId] else { return }
 		entry.completed = true
 		records[videoId] = entry
+		persist()
+	}
+
+	// Hard removal from the watch history (Continue's dismiss only completes).
+	func delete(_ videoId: String) {
+		records.removeValue(forKey: videoId)
 		persist()
 	}
 

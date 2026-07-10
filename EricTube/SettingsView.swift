@@ -4,6 +4,7 @@ import SwiftUI
 // Playback preferences the app reads at runtime; all persist via the manager.
 struct SettingsView: View {
 	@ObservedObject var sessions: WebSessionManager
+	@AppStorage("watchedThreshold") private var watchedThreshold = 10.0
 
 	// "Pause hidden tabs" is the user-facing inverse of playInBackground, so
 	// it stays in sync with the top bar's background-play toggle.
@@ -32,6 +33,22 @@ struct SettingsView: View {
 				isOn: pauseHidden,
 				title: "Pause hidden tabs",
 				detail: "Only the visible tab plays; switching away pauses the last one. Music keeps playing.")
+
+			Divider()
+				.opacity(0.4)
+
+			HStack(alignment: .top) {
+				VStack(alignment: .leading, spacing: 2) {
+					Text("Mark watched near the end")
+					Text("Within this many seconds of the end, a video is done and moves to Previously Watched.")
+						.font(.system(size: 11))
+						.foregroundStyle(.secondary)
+						.fixedSize(horizontal: false, vertical: true)
+				}
+				.frame(maxWidth: .infinity, alignment: .leading)
+				Stepper("\(Int(watchedThreshold))s", value: $watchedThreshold, in: 0...120, step: 5)
+					.fixedSize()
+			}
 		}
 		.padding(18)
 		.frame(width: 320)

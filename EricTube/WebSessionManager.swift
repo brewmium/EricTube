@@ -203,11 +203,17 @@ final class WebSessionManager: ObservableObject {
 		}
 
 		let session = WatchSession(webView: webView)
-		watchSessions.append(session)
+		// Newest on top: sessions read newest -> oldest down the list.
+		watchSessions.insert(session, at: 0)
 		if activate {
 			active = .watch(session.id)
 		}
 		scheduleSnapshot()
+	}
+
+	// The "+" in the Sessions header: a fresh youtube.com session, activated.
+	func newSession() {
+		openTab(path: "/", activate: true)
 	}
 
 	func isAudible(_ webView: WKWebView?) -> Bool {
