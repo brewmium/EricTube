@@ -192,7 +192,7 @@ struct WatchPipelineView: View {
 							icon: "music.note", title: "Music",
 							selected: sessions.active == .music,
 							audible: sessions.isAudible(sessions.musicWebView),
-							select: { sessions.showMusic() },
+							select: { sessions.selectSession(.music) },
 							close: nil)
 							.padding(.leading, 8)
 					}
@@ -415,7 +415,7 @@ struct SessionTabRow: View {
 			}
 		}
 		.onTapGesture {
-			sessions.active = key
+			sessions.selectSession(key)
 		}
 		.onHover { hovering = $0 }
 		.draggable(videoId ?? "")

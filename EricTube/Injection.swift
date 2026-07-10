@@ -317,6 +317,9 @@ enum Injection {
 	// stays quiet.
 	static let playNow = "(function(){if(location.pathname!=='/watch'){return;}window.__erictubeHoldPaused=false;const v=document.querySelector('video.html5-main-video')||document.querySelector('video');if(v&&v.paused){v.play();}})();"
 
+	// Toggle play/pause — clicking the already-current session's row.
+	static let togglePlay = "(function(){const v=document.querySelector('video.html5-main-video')||document.querySelector('video');if(!v){return;}if(v.paused){window.__erictubeHoldPaused=false;v.play();}else{v.pause();}})();"
+
 	// Live-applies the theater preference to a mounted view: sets the flag and
 	// toggles the current watch page's layout to match immediately.
 	static func setTheater(_ on: Bool) -> String {

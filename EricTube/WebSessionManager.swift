@@ -222,9 +222,22 @@ final class WebSessionManager: ObservableObject {
 		scheduleSnapshot()
 	}
 
-	// The "+" in the Sessions header: a fresh youtube.com session, activated.
+	// Clicking a session row: switch to it if it isn't current; if it already
+	// is, that's a play/pause toggle (not a no-op re-select).
+	func selectSession(_ key: SessionKey) {
+		if active == key {
+			webView(for: key)?.evaluateJavaScript(Injection.togglePlay, completionHandler: nil)
+		} else if case .music = key, musicWebView == nil {
+			showMusic()
+		} else {
+			active = key
+		}
+	}
+
+	// The "+" in the Sessions header: a fresh youtube.com session in the
+	// background — adding a tab doesn't steal focus from the current one.
 	func newSession() {
-		openTab(path: "/", activate: true)
+		openTab(path: "/", activate: false)
 	}
 
 	// Reorder a session within the list (drag to reorder). If the video isn't
