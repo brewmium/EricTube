@@ -127,14 +127,30 @@ final class WebSessionManager: ObservableObject {
 	}
 
 	// Opening a video with recorded progress resumes where it left off.
+	// If the video is already open as a tab, switch to it (or, for a
+	// background open, leave it be) instead of spawning a twin.
 	func openWatchTab(videoId raw: String, activate: Bool = true) {
 		let videoId = raw.filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
 		guard !videoId.isEmpty else { return }
+		if let existing = watchSessions.first(where: { currentVideoId(of: $0.webView) == videoId }) {
+			paletteRequest = nil
+			if activate {
+				active = .watch(existing.id)
+			}
+			return
+		}
 		var path = "/watch?v=\(videoId)"
 		if let seconds = ProgressStore.shared.resumeSeconds(for: videoId) {
 			path += "&t=\(Int(seconds))s"
 		}
 		openTab(path: path, activate: activate)
+	}
+
+	private func currentVideoId(of webView: WKWebView) -> String? {
+		guard let url = webView.url,
+		      let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+		      components.path == "/watch" else { return nil }
+		return components.queryItems?.first { $0.name == "v" }?.value
 	}
 
 	// Any youtube.com path (watch, channel, playlist) as an ephemeral tab,

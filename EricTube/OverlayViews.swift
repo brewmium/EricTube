@@ -79,6 +79,8 @@ struct ContinueRow: View {
 			} label: {
 				Image(systemName: "xmark")
 					.font(.system(size: 10, weight: .bold))
+					.frame(width: 24, height: 24)
+					.contentShape(Rectangle())
 			}
 			.buttonStyle(.borderless)
 			.help("Remove from Continue")

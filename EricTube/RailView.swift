@@ -95,6 +95,8 @@ struct SessionRow: View {
 				Button(action: close) {
 					Image(systemName: "xmark")
 						.font(.system(size: 13, weight: .bold))
+						.frame(width: 26, height: 26)
+						.contentShape(Rectangle())
 				}
 				.buttonStyle(.borderless)
 				.help("Close tab")

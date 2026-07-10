@@ -153,6 +153,8 @@ struct TabChip: View {
 			} label: {
 				Image(systemName: "xmark")
 					.font(.system(size: 10, weight: .bold))
+					.frame(width: 22, height: 22)
+					.contentShape(Rectangle())
 			}
 			.buttonStyle(.borderless)
 			.help("Close tab")
