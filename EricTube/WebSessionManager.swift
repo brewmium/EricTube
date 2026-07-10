@@ -116,11 +116,17 @@ final class WebSessionManager: ObservableObject {
 		webView(for: key)?.evaluateJavaScript(Injection.pauseNow, completionHandler: nil)
 	}
 
-	// With autoplay-on-select on, the session you switch to starts playing
-	// (playNow no-ops off a /watch page, so landing on the home feed is quiet).
+	// Bringing a session to the front (post-launch) frees its pause hold so it
+	// can play; with autoplay-on-select it also starts playing. On launch
+	// (restoring) neither fires — restored sessions stay held until the user
+	// clicks into them, so nothing autoplays.
 	private func playOnEnter(_ key: SessionKey) {
-		guard !restoring, autoplayOnSelect else { return }
-		webView(for: key)?.evaluateJavaScript(Injection.playNow, completionHandler: nil)
+		guard !restoring else { return }
+		let webView = webView(for: key)
+		webView?.evaluateJavaScript(Injection.releasePause, completionHandler: nil)
+		if autoplayOnSelect {
+			webView?.evaluateJavaScript(Injection.playNow, completionHandler: nil)
+		}
 	}
 
 	// Every session that must stay mounted (hidden, not torn down) so

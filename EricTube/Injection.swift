@@ -276,43 +276,46 @@ enum Injection {
 	})();
 	"""#
 
-	// One-shot pause of the next playback attempt. Armed at load for
-	// restored views (__erictubeRestorePause flag) and on demand via
-	// __erictubeArmPause() for tabs opened in the background.
+	// A persistent pause hold, not a one-shot: while held, EVERY play attempt
+	// is immediately paused, so a page that fires ad->content or re-inits its
+	// player can't leak through (that leak was 4 restored tabs autoplaying at
+	// once). Restored and background-opened sessions start held. The first
+	// real mousedown in the page releases the hold — and only the visible,
+	// active session can receive one (hidden sessions have hit-testing off),
+	// so nothing autoplays on launch or in the background, yet the user's own
+	// click to play always frees it.
 	static let restorePauseScript = #"""
 	(function () {
-		if (window.__erictubeArmPause) { return; }
-		window.__erictubeArmPause = function () {
-			if (window.__erictubePauseArmed) { return; }
-			window.__erictubePauseArmed = true;
-			function once(e) {
-				if (!(e.target instanceof HTMLVideoElement)) { return; }
-				document.removeEventListener('playing', once, true);
-				// A deliberate play (autoplay-on-select) disarms us first;
-				// don't fight it.
-				if (window.__erictubePauseArmed) {
-					e.target.pause();
-					window.__erictubePauseArmed = false;
-				}
+		if (window.__erictubePauseGuard) { return; }
+		window.__erictubePauseGuard = true;
+		document.addEventListener('playing', function (e) {
+			if (window.__erictubeHoldPaused && e.target instanceof HTMLVideoElement) {
+				try { e.target.pause(); } catch (err) {}
 			}
-			document.addEventListener('playing', once, true);
-		};
-		if (window.__erictubeRestorePause) {
-			window.__erictubeArmPause();
-		}
+		}, true);
+		document.addEventListener('mousedown', function () {
+			window.__erictubeHoldPaused = false;
+		}, true);
+		window.__erictubeArmPause = function () { window.__erictubeHoldPaused = true; };
+		window.__erictubeReleasePause = function () { window.__erictubeHoldPaused = false; };
+		if (window.__erictubeRestorePause) { window.__erictubeHoldPaused = true; }
 	})();
 	"""#
 
 	static let armPause = "window.__erictubeArmPause && window.__erictubeArmPause();"
 
+	// Frees a session's pause hold without playing (used when a session is
+	// brought to the front by the user post-launch).
+	static let releasePause = "window.__erictubeReleasePause && window.__erictubeReleasePause();"
+
 	// Pauses the page's main video if playing (switching away from a
 	// session with background play off).
 	static let pauseNow = "(function(){const v=document.querySelector('video.html5-main-video')||document.querySelector('video');if(v&&!v.paused){v.pause();}})();"
 
-	// Plays the page's main video (autoplay-on-select). Disarms any pending
-	// one-shot pause first, and no-ops off a /watch page so switching to the
-	// home feed stays quiet.
-	static let playNow = "(function(){if(location.pathname!=='/watch'){return;}window.__erictubePauseArmed=false;const v=document.querySelector('video.html5-main-video')||document.querySelector('video');if(v&&v.paused){v.play();}})();"
+	// Plays the page's main video (autoplay-on-select). Releases the pause
+	// hold first, and no-ops off a /watch page so switching to the home feed
+	// stays quiet.
+	static let playNow = "(function(){if(location.pathname!=='/watch'){return;}window.__erictubeHoldPaused=false;const v=document.querySelector('video.html5-main-video')||document.querySelector('video');if(v&&v.paused){v.play();}})();"
 
 	// Live-applies the theater preference to a mounted view: sets the flag and
 	// toggles the current watch page's layout to match immediately.
