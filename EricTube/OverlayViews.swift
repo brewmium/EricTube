@@ -55,16 +55,15 @@ private struct ReorderDrop: DropDelegate {
 
 	func performDrop(info: DropInfo) -> Bool {
 		let target = slot(info).index
+		// Clear the insertion line immediately, unconditionally — the payload
+		// loads asynchronously, so deferring the clear left a stale line.
+		indicator = nil
 		guard let provider = info.itemProviders(for: [.plainText]).first else {
-			indicator = nil
 			return false
 		}
 		_ = provider.loadObject(ofClass: NSString.self) { object, _ in
 			guard let videoId = object as? String, !videoId.isEmpty else { return }
-			Task { @MainActor in
-				onMove(videoId, target)
-				indicator = nil
-			}
+			Task { @MainActor in onMove(videoId, target) }
 		}
 		return true
 	}
