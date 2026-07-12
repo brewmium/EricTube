@@ -49,6 +49,12 @@ private struct ReorderDrop: DropDelegate {
 		return DropProposal(operation: .move)
 	}
 
+	// Leaving a row (including the settle right after a drop) clears the line
+	// unless an adjacent row immediately re-claims it.
+	func dropExited(info: DropInfo) {
+		if indicator?.section == section { indicator = nil }
+	}
+
 	private func slot(_ info: DropInfo) -> DropIndicator {
 		DropIndicator(section: section, index: info.location.y > height / 2 ? index + 1 : index)
 	}
@@ -174,7 +180,7 @@ struct WatchPipelineView: View {
 					icon: "rectangle.stack.badge.play", title: "Sessions",
 					count: (sessions.musicWebView == nil ? 0 : 1) + sessions.watchSessions.count,
 					collapsed: $collapseSessions, onModifierClick: handleSessionsModifierClick,
-					onDropVideo: { sessions.moveSession($0, toIndex: 0) }) {
+					onDropVideo: { sessions.moveSessionByPayload($0, toIndex: 0) }) {
 					Button {
 						sessions.newSession()
 					} label: {
@@ -200,11 +206,12 @@ struct WatchPipelineView: View {
 					ForEach(Array(sessions.watchSessions.enumerated()), id: \.element.id) { offset, session in
 						SessionTabRow(sessions: sessions, progress: progress,
 							webView: session.webView, key: .watch(session.id),
+							dragPayload: session.id.uuidString,
 							onClose: { sessions.closeWatchTab(session) })
 							.padding(.leading, 8)
 							.modifier(ReorderableRow(section: "sessions", index: offset,
 								indicator: $dropIndicator,
-								onMove: { sessions.moveSession($0, toIndex: $1) }))
+								onMove: { sessions.moveSessionByPayload($0, toIndex: $1) }))
 						insertionLine("sessions", offset + 1)
 					}
 				}
@@ -307,30 +314,30 @@ struct WatchPipelineView: View {
 
 	// Drop on a tier header: file it at the top of that tier (moving between
 	// tiers just re-tiers it); if it's a live session, close it.
-	private func fileVideo(_ videoId: String, into tier: Tier) {
-		guard !videoId.isEmpty else { return }
+	private func fileVideo(_ payload: String, into tier: Tier) {
+		guard let videoId = sessions.videoId(forDragPayload: payload) else { return }
 		store.fileToTierTop(videoId: videoId, tier: tier)
 		sessions.closeSession(forVideoId: videoId)
 	}
 
 	// Drop between tier rows: file at that position.
-	private func moveIntoTier(_ videoId: String, tier: Tier, toIndex: Int) {
-		guard !videoId.isEmpty else { return }
+	private func moveIntoTier(_ payload: String, tier: Tier, toIndex: Int) {
+		guard let videoId = sessions.videoId(forDragPayload: payload) else { return }
 		store.reorderInTier(videoId: videoId, tier: tier, toIndex: toIndex)
 		sessions.closeSession(forVideoId: videoId)
 	}
 
 	// Drop on Continue: back to plain in-progress — unfile from its tier and
 	// clear the done flag so it resurfaces here.
-	private func backToContinue(_ videoId: String) {
-		guard !videoId.isEmpty else { return }
+	private func backToContinue(_ payload: String) {
+		guard let videoId = sessions.videoId(forDragPayload: payload) else { return }
 		store.archive(videoId)
 		progress.uncomplete(videoId)
 	}
 
 	// Drop on Previously Watched: mark it done.
-	private func markWatched(_ videoId: String) {
-		guard !videoId.isEmpty else { return }
+	private func markWatched(_ payload: String) {
+		guard let videoId = sessions.videoId(forDragPayload: payload) else { return }
 		progress.dismiss(videoId)
 	}
 }
@@ -368,6 +375,7 @@ struct SessionTabRow: View {
 	@ObservedObject var progress: ProgressStore
 	let webView: WKWebView
 	let key: SessionKey
+	var dragPayload = ""
 	let onClose: (() -> Void)?
 	@State private var title = "YouTube"
 	@State private var videoId: String?
@@ -418,7 +426,7 @@ struct SessionTabRow: View {
 			sessions.selectSession(key)
 		}
 		.onHover { hovering = $0 }
-		.draggable(videoId ?? "")
+		.draggable(dragPayload)
 		.onReceive(webView.publisher(for: \.title)) { newTitle in
 			if let newTitle, !newTitle.isEmpty {
 				title = newTitle.strippedYouTubeSuffix

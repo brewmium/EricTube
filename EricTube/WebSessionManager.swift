@@ -240,21 +240,31 @@ final class WebSessionManager: ObservableObject {
 		openTab(path: "/", activate: false)
 	}
 
-	// Reorder a session within the list (drag to reorder). If the video isn't
-	// an open session, open it (lands on top).
-	func moveSession(_ videoId: String, toIndex: Int) {
-		guard let from = watchSessions.firstIndex(where: {
-			currentVideoId(of: $0.webView) == videoId
-		}) else {
-			openWatchTab(videoId: videoId)
-			return
+	// A drag payload is a session UUID (session rows, so reorder works even
+	// with no video loaded) or a plain videoId (tier/continue/history rows).
+	// Resolve it to a videoId for filing into lists/tiers.
+	func videoId(forDragPayload payload: String) -> String? {
+		if let uuid = UUID(uuidString: payload),
+		   let session = watchSessions.first(where: { $0.id == uuid }) {
+			return currentVideoId(of: session.webView)
 		}
-		let session = watchSessions.remove(at: from)
-		var target = toIndex
-		if from < target { target -= 1 }
-		target = max(0, min(watchSessions.count, target))
-		watchSessions.insert(session, at: target)
-		scheduleSnapshot()
+		return payload.isEmpty ? nil : payload
+	}
+
+	// Reorder a session within the list (drag to reorder). A session UUID
+	// payload reorders that session; a bare videoId from elsewhere opens it.
+	func moveSessionByPayload(_ payload: String, toIndex: Int) {
+		if let uuid = UUID(uuidString: payload),
+		   let from = watchSessions.firstIndex(where: { $0.id == uuid }) {
+			let session = watchSessions.remove(at: from)
+			var target = toIndex
+			if from < target { target -= 1 }
+			target = max(0, min(watchSessions.count, target))
+			watchSessions.insert(session, at: target)
+			scheduleSnapshot()
+		} else if !payload.isEmpty {
+			openWatchTab(videoId: payload, activate: false)
+		}
 	}
 
 	func isAudible(_ webView: WKWebView?) -> Bool {
@@ -470,7 +480,7 @@ final class WebSessionManager: ObservableObject {
 		controller.addUserScript(WKUserScript(
 			source: Injection.restorePauseScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
 
-		let webView = WKWebView(frame: .zero, configuration: config)
+		let webView = SessionWebView(frame: .zero, configuration: config)
 		webView.allowsBackForwardNavigationGestures = true
 		webView.allowsMagnification = true
 		webView.isInspectable = true

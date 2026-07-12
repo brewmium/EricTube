@@ -21,9 +21,11 @@ struct ContentView: View {
 					// so hidden sessions keep playing and keep their place
 					// (music keeps going while browsing elsewhere).
 					ForEach(sessions.displayed) { entry in
-						WebView(webView: entry.webView)
+						WebView(webView: entry.webView,
+							interactive: sessions.active == entry.key)
 							.opacity(sessions.active == entry.key ? 1 : 0)
 							.allowsHitTesting(sessions.active == entry.key)
+							.zIndex(sessions.active == entry.key ? 1 : 0)
 					}
 				}
 				.overlay(alignment: .topLeading) {
