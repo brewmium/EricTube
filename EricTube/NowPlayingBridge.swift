@@ -1,5 +1,6 @@
 import MediaPlayer
 import WebKit
+import os.log
 
 // Headphone / media-key control. macOS routes remote commands (AirPods
 // squeezes, F8, Control Center) to the app registered as Now Playing —
@@ -10,6 +11,8 @@ import WebKit
 final class NowPlayingBridge {
 	static let shared = NowPlayingBridge()
 
+	private static let log = Logger(subsystem: "com.brewmium.EricTube", category: "nowplaying")
+
 	private weak var targetWebView: WKWebView?
 	private var configured = false
 
@@ -19,34 +22,46 @@ final class NowPlayingBridge {
 		let center = MPRemoteCommandCenter.shared()
 		center.togglePlayPauseCommand.addTarget { _ in
 			MainActor.assumeIsolated {
-				NowPlayingBridge.shared.run("v.paused ? v.play() : v.pause()")
+				Self.log.info("command: togglePlayPause")
+				return NowPlayingBridge.shared.run("v.paused ? v.play() : v.pause()")
 			}
 		}
 		center.playCommand.addTarget { _ in
 			MainActor.assumeIsolated {
-				NowPlayingBridge.shared.run("v.play()")
+				Self.log.info("command: play")
+				return NowPlayingBridge.shared.run("v.play()")
 			}
 		}
 		center.pauseCommand.addTarget { _ in
 			MainActor.assumeIsolated {
-				NowPlayingBridge.shared.run("v.pause()")
+				Self.log.info("command: pause")
+				return NowPlayingBridge.shared.run("v.pause()")
 			}
 		}
 		center.skipForwardCommand.preferredIntervals = [15]
 		center.skipForwardCommand.addTarget { _ in
 			MainActor.assumeIsolated {
-				NowPlayingBridge.shared.run("v.currentTime += 15")
+				Self.log.info("command: skipForward")
+				return NowPlayingBridge.shared.run("v.currentTime += 15")
 			}
 		}
 		center.skipBackwardCommand.preferredIntervals = [15]
 		center.skipBackwardCommand.addTarget { _ in
 			MainActor.assumeIsolated {
-				NowPlayingBridge.shared.run("v.currentTime -= 15")
+				Self.log.info("command: skipBackward")
+				return NowPlayingBridge.shared.run("v.currentTime -= 15")
 			}
 		}
 	}
 
 	func update(title: String, seconds: Double, duration: Double, playing: Bool, webView: WKWebView) {
+		// Beats arrive from EVERY web view (restore, pause-arming churn,
+		// hidden tabs). Only a playing video may take or re-take the bridge;
+		// a paused beat may only update the video already under control.
+		// Otherwise hidden-tab churn repoints headphone commands at an
+		// invisible video, and restore-time paused beats yank the system
+		// Now Playing slot from whatever the user was actually listening to.
+		if !playing && webView !== targetWebView { return }
 		configure()
 		targetWebView = webView
 		var info: [String: Any] = [
@@ -57,8 +72,21 @@ final class NowPlayingBridge {
 		if duration > 0 {
 			info[MPMediaItemPropertyPlaybackDuration] = duration
 		}
-		MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-		MPNowPlayingInfoCenter.default().playbackState = playing ? .playing : .paused
+		let center = MPNowPlayingInfoCenter.default()
+		center.nowPlayingInfo = info
+		if playing {
+			// macOS hands the Now Playing slot (where headphone/media-key
+			// commands route) to the most recent playbackState *transition* —
+			// re-setting .playing is a no-op, so any later claimant (a Chrome
+			// tab event, a hidden view play/pausing during arming) silently
+			// steals routing for good. Bounce the state each beat to force a
+			// real transition and keep the slot while our video plays.
+			center.playbackState = .paused
+			center.playbackState = .playing
+		} else {
+			center.playbackState = .paused
+		}
+		Self.log.info("claim: \(title, privacy: .public) playing=\(playing) t=\(Int(seconds))")
 	}
 
 	private func run(_ action: String) -> MPRemoteCommandHandlerStatus {
