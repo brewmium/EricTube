@@ -293,7 +293,27 @@ enum Injection {
 				try { e.target.pause(); } catch (err) {}
 			}
 		}, true);
-		document.addEventListener('mousedown', function () {
+		// The 'playing' listener alone misses cases: a restored player can start
+		// before this script binds, and YouTube re-plays faster than one pause
+		// can catch — which left every restored session playing (all speakers
+		// lit) on launch. This sweep actively pins any held video paused. It's a
+		// cheap flag check 3x/s and only touches the DOM while the hold is on;
+		// it stays armed for the document's life so a re-armed hold (a recycled
+		// background tab) is covered too.
+		setInterval(function () {
+			if (!window.__erictubeHoldPaused) { return; }
+			var vids = document.querySelectorAll('video');
+			for (var i = 0; i < vids.length; i++) {
+				if (!vids[i].paused) { try { vids[i].pause(); } catch (err) {} }
+			}
+		}, 300);
+		// Only a REAL user press frees the hold. isTrusted is false for events
+		// YouTube's own player dispatches during init (overlay dismissal, ad->
+		// content handoff) — those used to leak a background tab into playback
+		// because hit-testing off only blocks OS-delivered events, not the
+		// page's own synthetic ones.
+		document.addEventListener('mousedown', function (e) {
+			if (!e.isTrusted) { return; }
 			window.__erictubeHoldPaused = false;
 		}, true);
 		window.__erictubeArmPause = function () { window.__erictubeHoldPaused = true; };
@@ -311,6 +331,16 @@ enum Injection {
 	// Pauses the page's main video if playing (switching away from a
 	// session with background play off).
 	static let pauseNow = "(function(){const v=document.querySelector('video.html5-main-video')||document.querySelector('video');if(v&&!v.paused){v.pause();}})();"
+
+	// Hard stop for a session being closed/parked or a warm view being reused:
+	// sets the pause hold AND pauses EVERY video on the page. The "every"
+	// matters — navigating a /watch page away spins up YouTube's miniplayer,
+	// which keeps playing on its own <video>; pausing only the main player left
+	// a closed tab audible until its view was torn down or reused (and a reused
+	// view then carried that audio into the "new" background tab). The hold
+	// keeps the guard suppressing any re-init until the view is deliberately
+	// brought forward.
+	static let stopAndHold = "(function(){window.__erictubeHoldPaused=true;document.querySelectorAll('video').forEach(function(v){try{v.pause();}catch(e){}});})();"
 
 	// Plays the page's main video (autoplay-on-select). Releases the pause
 	// hold first, and no-ops off a /watch page so switching to the home feed

@@ -51,16 +51,14 @@ struct SessionRow: View {
 
 	var body: some View {
 		HStack(spacing: 8) {
-			Image(systemName: icon)
+			// Leading glyph becomes the blue speaker while audible, so the
+			// now-playing state never nudges the title over.
+			Image(systemName: audible ? "speaker.wave.2.fill" : icon)
+				.foregroundStyle(audible ? Color.accentColor : Color.primary)
 				.frame(width: 24)
 			Text(title)
 				.lineLimit(1)
 				.truncationMode(.tail)
-			if audible {
-				Image(systemName: "speaker.wave.2.fill")
-					.font(.system(size: 12))
-					.foregroundStyle(Color.accentColor)
-			}
 			Spacer(minLength: 0)
 			if let close {
 				Button(action: close) {

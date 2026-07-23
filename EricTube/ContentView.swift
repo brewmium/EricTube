@@ -21,11 +21,20 @@ struct ContentView: View {
 					// so hidden sessions keep playing and keep their place
 					// (music keeps going while browsing elsewhere).
 					ForEach(sessions.displayed) { entry in
-						WebView(webView: entry.webView,
-							interactive: sessions.active == entry.key)
-							.opacity(sessions.active == entry.key ? 1 : 0)
-							.allowsHitTesting(sessions.active == entry.key)
-							.zIndex(sessions.active == entry.key ? 1 : 0)
+						let isActive = sessions.active == entry.key
+						WebView(webView: entry.webView, interactive: isActive)
+							.opacity(isActive ? 1 : 0)
+							.allowsHitTesting(isActive)
+							// Park inactive sessions far offscreen. Opacity-0
+							// alone leaves an on-screen hidden webview's AppKit
+							// mouse tracking live, so the topmost one under the
+							// cursor bled its link cursor + title tooltip onto
+							// the active view (hitTest-nil governs clicks, not
+							// tracking-area cursor/tooltip). The window stays
+							// visible, so background playback — which keys off
+							// document visibility, not view position — continues.
+							.offset(x: isActive ? 0 : 100_000)
+							.zIndex(isActive ? 1 : 0)
 					}
 				}
 				.overlay(alignment: .topLeading) {

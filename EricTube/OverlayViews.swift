@@ -1,6 +1,36 @@
 import SwiftUI
 import WebKit
 import UniformTypeIdentifiers
+import AppKit
+
+// The insertion line is driven by DropDelegate callbacks (dropExited /
+// performDrop), but those don't fire on every end-of-drag path: a drop landing
+// off any row, a cancel, or a mid-drag list re-render (a progress beat or
+// audible toggle republishes and re-registers the delegate) can orphan the
+// callback that owns the indicator, stranding the line lit. A mouse-up monitor
+// clears it unconditionally the moment the pointer is released — the one signal
+// that always arrives.
+private struct ClearDropOnRelease: ViewModifier {
+	@Binding var indicator: DropIndicator?
+	@State private var monitor: Any?
+
+	func body(content: Content) -> some View {
+		content
+			.onAppear {
+				guard monitor == nil else { return }
+				monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { event in
+					if indicator != nil {
+						DispatchQueue.main.async { indicator = nil }
+					}
+					return event
+				}
+			}
+			.onDisappear {
+				if let monitor { NSEvent.removeMonitor(monitor) }
+				monitor = nil
+			}
+	}
+}
 
 // Where a dragged video would land: the target section and the insertion
 // index between its rows. Drives the insertion line.
@@ -268,6 +298,7 @@ struct WatchPipelineView: View {
 			}
 			.padding(.bottom, 10)
 		}
+		.modifier(ClearDropOnRelease(indicator: $dropIndicator))
 	}
 
 	private func tierCollapsed(_ tier: Tier) -> Binding<Bool> {
@@ -386,21 +417,19 @@ struct SessionTabRow: View {
 	}
 
 	var body: some View {
+		let playing = sessions.isAudible(webView)
 		HStack(spacing: 8) {
-			Image(systemName: "play.rectangle")
+			// The leading glyph doubles as the now-playing indicator: it turns
+			// into a blue speaker while audible instead of an inline badge that
+			// reflowed the title.
+			Image(systemName: playing ? "speaker.wave.2.fill" : "play.rectangle")
+				.foregroundStyle(playing ? Color.accentColor : Color.primary)
 				.frame(width: 24)
 			VStack(alignment: .leading, spacing: 3) {
-				HStack(spacing: 6) {
-					Text(title)
-						.lineLimit(2)
-						.truncationMode(.tail)
-					if sessions.isAudible(webView) {
-						Image(systemName: "speaker.wave.2.fill")
-							.font(.system(size: 12))
-							.foregroundStyle(Color.accentColor)
-					}
-					Spacer(minLength: 0)
-				}
+				Text(title)
+					.lineLimit(2)
+					.truncationMode(.tail)
+					.frame(maxWidth: .infinity, alignment: .leading)
 				if let videoId, let entry = progress.records[videoId], entry.duration > 0 {
 					ProgressView(value: entry.fraction)
 						.controlSize(.small)

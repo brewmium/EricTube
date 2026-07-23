@@ -203,7 +203,10 @@ final class WebSessionManager: ObservableObject {
 		   !recycled.isLoading, recycled.url?.host?.hasSuffix("youtube.com") == true {
 			parked.removeLast()
 			if !activate {
-				recycled.evaluateJavaScript(Injection.armPause, completionHandler: nil)
+				// Arm the hold AND silence anything still playing in the
+				// recycled view before it hops to the new video, so a
+				// background "Open as tab" can't inherit stray audio.
+				recycled.evaluateJavaScript(Injection.stopAndHold, completionHandler: nil)
 			}
 			recycled.evaluateJavaScript(Injection.spaNavigate(path: path), completionHandler: nil)
 			webView = recycled
@@ -298,8 +301,13 @@ final class WebSessionManager: ObservableObject {
 		let wasActive = (active == .watch(session.id))
 		watchSessions.removeAll { $0.id == session.id }
 		audible.remove(ObjectIdentifier(session.webView))
+		// Kill playback first — unconditionally, whether the view gets parked or
+		// dropped. Navigating home alone leaves YouTube's miniplayer running,
+		// and a dropped view plays on until it deallocs; both leaked audio past
+		// the close.
+		session.webView.evaluateJavaScript(Injection.stopAndHold, completionHandler: nil)
 		if parked.isEmpty {
-			// SPA-hop home: stops playback and keeps the view warm.
+			// SPA-hop home: keeps the view warm for the next tab.
 			session.webView.evaluateJavaScript(Injection.spaNavigate(path: "/"), completionHandler: nil)
 			parked.append(session.webView)
 		}
