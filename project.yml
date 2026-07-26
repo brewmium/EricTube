@@ -23,6 +23,7 @@ targets:
         CFBundleVersion: "1"
         LSApplicationCategoryType: public.app-category.entertainment
         NSHighResolutionCapable: true
+        CFBundleIconFile: AppIcon
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.brewmium.EricTube
