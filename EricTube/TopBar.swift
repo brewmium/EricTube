@@ -117,8 +117,23 @@ struct IconButton: View {
 					: AnyShapeStyle(Color.primary.opacity(0.85)))
 				.frame(width: 30, height: 30)
 		}
-		.buttonStyle(.borderless)
+		.buttonStyle(PressHighlightStyle())
 		.tooltip(help)
+	}
+}
+
+// Borderless buttons give no pressed feedback on macOS; this style backs the
+// icon with a soft rounded highlight while the mouse is down. Custom styles
+// opt out of the automatic disabled gray-out, so dimming is ours to do here.
+struct PressHighlightStyle: ButtonStyle {
+	@Environment(\.isEnabled) private var isEnabled
+
+	func makeBody(configuration: Configuration) -> some View {
+		configuration.label
+			.opacity(isEnabled ? 1 : 0.35)
+			.background(RoundedRectangle(cornerRadius: 6)
+				.fill(Color.primary.opacity(configuration.isPressed ? 0.18 : 0)))
+			.contentShape(Rectangle())
 	}
 }
 
@@ -170,24 +185,46 @@ struct URLDisplay: View {
 	}
 }
 
-// Always-visible copy button for the active session's URL — sits at the end
-// of the URL display, not buried under the three-dot menu.
+// Copy button for the active session's URL — sits at the end of the URL
+// display, not buried under the three-dot menu. A "Copied" capsule fades in
+// beside it on click; it lives inside the bar because anything hanging below
+// would be drawn over by the WKWebView (AppKit views win the z-fight).
 struct CopyURLButton: View {
 	@ObservedObject var sessions: WebSessionManager
+	@State private var showCopied = false
+	@State private var hideCopied: DispatchWorkItem?
 
 	var body: some View {
-		Button {
-			guard let url = sessions.activeWebView.url else { return }
-			NSPasteboard.general.clearContents()
-			NSPasteboard.general.setString(url.absoluteString, forType: .string)
-		} label: {
-			Image(systemName: "doc.on.doc")
-				.font(.system(size: 16))
-				.foregroundStyle(Color.primary.opacity(0.85))
-				.frame(width: 30, height: 30)
+		HStack(spacing: 6) {
+			Button {
+				guard let url = sessions.activeWebView.url else { return }
+				NSPasteboard.general.clearContents()
+				NSPasteboard.general.setString(url.absoluteString, forType: .string)
+				withAnimation(.easeOut(duration: 0.12)) { showCopied = true }
+				hideCopied?.cancel()
+				let hide = DispatchWorkItem {
+					withAnimation(.easeIn(duration: 0.35)) { showCopied = false }
+				}
+				hideCopied = hide
+				DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: hide)
+			} label: {
+				Image(systemName: "doc.on.doc")
+					.font(.system(size: 16))
+					.foregroundStyle(Color.primary.opacity(0.85))
+					.frame(width: 30, height: 30)
+			}
+			.buttonStyle(PressHighlightStyle())
+			.tooltip("Copy URL")
+			if showCopied {
+				Text("Copied")
+					.font(.system(size: 14, weight: .semibold))
+					.foregroundStyle(.white)
+					.padding(.horizontal, 9)
+					.padding(.vertical, 3)
+					.background(Capsule().fill(Color.accentColor))
+					.transition(.opacity)
+			}
 		}
-		.buttonStyle(.borderless)
-		.tooltip("Copy URL")
 	}
 }
 
@@ -206,12 +243,10 @@ struct AddToListButton: View {
 		} label: {
 			Image(systemName: "text.badge.plus")
 				.font(.system(size: 20))
-				.foregroundStyle(videoId == nil
-					? Color.primary.opacity(0.3)
-					: Color.primary.opacity(0.85))
+				.foregroundStyle(Color.primary.opacity(0.85))
 				.frame(width: 30, height: 30)
 		}
-		.buttonStyle(.borderless)
+		.buttonStyle(PressHighlightStyle())
 		.disabled(videoId == nil || store.lists.isEmpty)
 		.tooltip("Add this video to a list")
 		.popover(isPresented: $showPicker, arrowEdge: .bottom) {
