@@ -4,7 +4,7 @@ import WebKit
 // Full-width top bar, Chrome-style, visible regardless of rail state.
 // Left to right: traffic lights, rail toggle, soft divider, jump-to cluster
 // (watch list, favorite video lists, music, favorite music lists), stronger
-// divider, back/forward, background-play toggle, then the active session's
+// divider, back/forward/reload, background-play toggle, then the active session's
 // URL (read-only, selectable) with a copy button at its end, and the
 // open-in-browser and settings icons. Session/tab switching lives in the
 // rail's Watch segment.
@@ -47,6 +47,9 @@ struct TopBar: View {
 			barDivider(28)
 			NavButtons(sessions: sessions)
 				.id(sessions.active)
+			IconButton("arrow.clockwise", help: "Reload page (bypass cache)") {
+				sessions.activeWebView.reloadFromOrigin()
+			}
 			barDivider(22)
 			IconButton("speaker.wave.2",
 				help: sessions.playInBackground

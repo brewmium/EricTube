@@ -25,6 +25,10 @@ struct EricTubeApp: App {
 		.windowStyle(.hiddenTitleBar)
 		.commands {
 			CommandGroup(after: .toolbar) {
+				Button("Reload Page") {
+					WebSessionManager.shared.activeWebView.reloadFromOrigin()
+				}
+				.keyboardShortcut("r", modifiers: [.command, .shift])
 				Button("Zoom In") {
 					WebSessionManager.shared.adjustZoom(by: 0.1)
 				}
