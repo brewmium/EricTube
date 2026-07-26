@@ -109,15 +109,16 @@ savePNG(repA, "a.png")
 
 // B — geometric "E" whose middle bar is a red play triangle
 let repB = makeIcon(bgTop: darkTop, bgBottom: darkBottom) {
-	// red edge border; 24 @1024 master ≈ 3px at 128px dock render (tuning knob)
-	let borderW: CGFloat = 24
+	// red edge border; 40 @1024 master ≈ 5px at 128px dock render (tuning knob)
+	let borderW: CGFloat = 40
 	let border = NSBezierPath(roundedRect: NSRect(x: 100, y: 100, width: 824, height: 824),
 	                          xRadius: 186, yRadius: 186)
 	border.append(NSBezierPath(roundedRect: NSRect(x: 100 + borderW, y: 100 + borderW,
 	                                               width: 824 - 2 * borderW, height: 824 - 2 * borderW),
 	                           xRadius: 186 - borderW, yRadius: 186 - borderW))
 	border.windingRule = .evenOdd
-	NSGradient(starting: redTop, ending: redBottom)!.draw(in: border, angle: -90)
+	redTop.setFill()
+	border.fill()
 	let white = rgb(0xF5F5F7)
 	white.setFill()
 	NSBezierPath(roundedRect: NSRect(x: 336, y: 618, width: 350, height: 96), xRadius: 28, yRadius: 28).fill()
