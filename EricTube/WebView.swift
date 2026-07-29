@@ -9,6 +9,16 @@ import WebKit
 final class SessionWebView: WKWebView {
 	var interactive = true
 
+	// Recovery bookkeeping, driven by WebSessionManager's navigation sentry.
+	// intendedURL is the URL the app last deliberately drove this view to —
+	// unlike `url` it exists before a load commits and survives a load that
+	// never does, so snapshots and recovery reloads never depend on WebKit
+	// having gotten there. needsRecovery marks a view that must reload before
+	// it's usable (dead web content process, exhausted load retries).
+	var intendedURL: URL?
+	var needsRecovery = false
+	var loadRetries = 0
+
 	override func hitTest(_ point: NSPoint) -> NSView? {
 		interactive ? super.hitTest(point) : nil
 	}

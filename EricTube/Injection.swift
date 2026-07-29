@@ -316,6 +316,14 @@ enum Injection {
 			if (!e.isTrusted) { return; }
 			window.__erictubeHoldPaused = false;
 		}, true);
+		// A real keypress is as deliberate as a click — space/K play must not
+		// fight the guard (it re-pauses within 300ms, which read as "restored
+		// session refuses to play"). Only the focused, visible session gets
+		// key events, so hidden sessions stay held.
+		document.addEventListener('keydown', function (e) {
+			if (!e.isTrusted) { return; }
+			window.__erictubeHoldPaused = false;
+		}, true);
 		window.__erictubeArmPause = function () { window.__erictubeHoldPaused = true; };
 		window.__erictubeReleasePause = function () { window.__erictubeHoldPaused = false; };
 		if (window.__erictubeRestorePause) { window.__erictubeHoldPaused = true; }

@@ -40,6 +40,7 @@ final class WebSessionManager: ObservableObject {
 		didSet {
 			if oldValue != active {
 				pauseOnLeave(oldValue)
+				if !restoring { recoverIfNeeded(webView(for: active)) }
 				playOnEnter(active)
 			}
 			scheduleSnapshot()
@@ -85,6 +86,9 @@ final class WebSessionManager: ObservableObject {
 	private var parked: [WKWebView] = []
 
 	private var restoring = false
+
+	// Retained here because WKWebView only holds its navigationDelegate weakly.
+	private lazy var sentry = NavigationSentry(manager: self)
 
 	// Never-hit safety net for activeWebView (the invariant keeps at least one
 	// session alive, so this stays uncreated).
@@ -185,7 +189,9 @@ final class WebSessionManager: ObservableObject {
 	}
 
 	func currentVideoId(of webView: WKWebView) -> String? {
-		guard let url = webView.url,
+		// A restored view has no live URL until its load commits; fall back to
+		// where the app pointed it so open-dedupe and drag payloads still work.
+		guard let url = webView.url ?? (webView as? SessionWebView)?.intendedURL,
 		      let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
 		      components.path == "/watch" else { return nil }
 		return components.queryItems?.first { $0.name == "v" }?.value
@@ -209,6 +215,7 @@ final class WebSessionManager: ObservableObject {
 				recycled.evaluateJavaScript(Injection.stopAndHold, completionHandler: nil)
 			}
 			recycled.evaluateJavaScript(Injection.spaNavigate(path: path), completionHandler: nil)
+			(recycled as? SessionWebView)?.intendedURL = fullURL
 			webView = recycled
 		} else {
 			// A cold load can't be pause-armed mid-flight, so background
@@ -226,10 +233,14 @@ final class WebSessionManager: ObservableObject {
 	}
 
 	// Clicking a session row: switch to it if it isn't current; if it already
-	// is, that's a play/pause toggle (not a no-op re-select).
+	// is, that's a play/pause toggle (not a no-op re-select) — unless the view
+	// is dead, in which case the click revives it instead.
 	func selectSession(_ key: SessionKey) {
 		if active == key {
-			webView(for: key)?.evaluateJavaScript(Injection.togglePlay, completionHandler: nil)
+			let target = webView(for: key)
+			if !recoverIfNeeded(target) {
+				target?.evaluateJavaScript(Injection.togglePlay, completionHandler: nil)
+			}
 		} else if case .music = key, musicWebView == nil {
 			showMusic()
 		} else {
@@ -366,6 +377,74 @@ final class WebSessionManager: ObservableObject {
 		}
 	}
 
+	// MARK: - Session health & recovery
+
+	// WKWebView never recovers on its own: WebKit reclaims hidden views' web
+	// content processes under memory pressure (routine with every session
+	// mounted at opacity 0), and a load that fails just leaves the view blank
+	// forever. The sentry routes both events here. The visible session comes
+	// back on the spot; hidden ones are flagged and revived when next shown,
+	// so recovery never re-creates the relaunch process storm.
+	func handleProcessDeath(_ webView: WKWebView) {
+		parked.removeAll { $0 === webView }   // never recycle a corpse
+		if webView === self.webView(for: active) {
+			recover(webView)
+		} else if let sessionView = webView as? SessionWebView {
+			sessionView.needsRecovery = true
+		}
+	}
+
+	func handleLoadFailure(_ webView: WKWebView, error: Error) {
+		let nsError = error as NSError
+		// YouTube's SPA cancels provisional loads constantly, and policy
+		// handoffs interrupt frames; neither means the view is broken.
+		if nsError.code == NSURLErrorCancelled { return }
+		if nsError.domain == "WebKitErrorDomain" && nsError.code == 102 { return }
+		guard let sessionView = webView as? SessionWebView else { return }
+		sessionView.loadRetries += 1
+		if sessionView.loadRetries <= 2 {
+			let delay = 1.5 * Double(sessionView.loadRetries)
+			Task { @MainActor in
+				try? await Task.sleep(for: .seconds(delay))
+				self.recover(sessionView)
+			}
+		} else {
+			// Out of retries — stop hammering a network that isn't there and
+			// revive on the user's next visit instead.
+			sessionView.needsRecovery = true
+		}
+	}
+
+	func handleCommit(_ webView: WKWebView) {
+		guard let sessionView = webView as? SessionWebView else { return }
+		sessionView.loadRetries = 0
+		sessionView.needsRecovery = false
+		sessionView.intendedURL = webView.url ?? sessionView.intendedURL
+	}
+
+	private func recover(_ webView: WKWebView) {
+		(webView as? SessionWebView)?.needsRecovery = false
+		if webView.url != nil {
+			webView.reload()
+		} else if let intended = (webView as? SessionWebView)?.intendedURL {
+			webView.load(URLRequest(url: intended))
+		} else {
+			webView.load(URLRequest(url: URL(string: "https://www.youtube.com/")!))
+		}
+	}
+
+	// The activation check: a flagged view, or one that never got a page
+	// (nothing committed, nothing in flight), reloads instead of presenting
+	// blank. Returns whether a recovery was kicked off.
+	@discardableResult
+	private func recoverIfNeeded(_ webView: WKWebView?) -> Bool {
+		guard let sessionView = webView as? SessionWebView,
+		      sessionView.needsRecovery || (sessionView.url == nil && !sessionView.isLoading)
+		else { return false }
+		recover(sessionView)
+		return true
+	}
+
 	// MARK: - Session snapshot & restore
 
 	private struct SessionSnapshot: Codable {
@@ -390,12 +469,20 @@ final class WebSessionManager: ObservableObject {
 		}
 		let snapshot = SessionSnapshot(
 			masterURL: nil,   // no special session anymore
-			musicURL: musicWebView?.url?.absoluteString,
-			tabURLs: watchSessions.compactMap { $0.webView.url?.absoluteString },
+			musicURL: musicWebView.flatMap { snapshotURL($0) },
+			tabURLs: watchSessions.compactMap { snapshotURL($0.webView) },
 			active: activeKey)
 		if let data = try? JSONEncoder().encode(snapshot) {
 			UserDefaults.standard.set(data, forKey: "sessionSnapshot")
 		}
+	}
+
+	// A view's live URL is nil until its first load commits — for minutes
+	// after a relaunch, or forever if the load failed. Snapshotting the live
+	// URL alone silently dropped those sessions (and shifted the saved active
+	// index); the intended URL keeps every session in the snapshot.
+	private func snapshotURL(_ webView: WKWebView) -> String? {
+		((webView.url ?? (webView as? SessionWebView)?.intendedURL))?.absoluteString
 	}
 
 	// Everything comes back at its saved position (t=) but paused (the restore
@@ -409,7 +496,7 @@ final class WebSessionManager: ObservableObject {
 		defer { restoring = false }
 
 		if let music = snapshot.musicURL, let restored = resumeURL(from: music) {
-			musicWebView = makeWebView(kind: "music", url: restored.url, restorePaused: restored.isWatch)
+			musicWebView = makeWebView(kind: "music", url: restored.url, restorePaused: restored.isWatch, deferLoad: true)
 		}
 		// Legacy master URL (old snapshots) becomes the first session.
 		var sessionURLs: [String] = []
@@ -417,7 +504,7 @@ final class WebSessionManager: ObservableObject {
 		sessionURLs.append(contentsOf: snapshot.tabURLs)
 		for urlString in sessionURLs {
 			guard let restored = resumeURL(from: urlString) else { continue }
-			let webView = makeWebView(kind: "watch", url: restored.url, restorePaused: true)
+			let webView = makeWebView(kind: "watch", url: restored.url, restorePaused: true, deferLoad: true)
 			watchSessions.append(WatchSession(webView: webView))
 		}
 		// Restore the selection. Legacy "tab:N"/"master" indices predate the
@@ -438,6 +525,31 @@ final class WebSessionManager: ObservableObject {
 		default:
 			if let first = watchSessions.first { active = .watch(first.id) }
 		}
+
+		// Load the selected session now; trickle the rest in behind it. A
+		// relaunch used to slam every restored tab's cold load through at
+		// once — that thundering herd is what left tabs spinning on YouTube's
+		// loading circle into error pages after a bounce.
+		if let selected = webView(for: active) { startDeferredLoad(selected) }
+		var queue: [WKWebView] = []
+		if let musicWebView, active != .music { queue.append(musicWebView) }
+		for session in watchSessions where active != .watch(session.id) {
+			queue.append(session.webView)
+		}
+		for (index, webView) in queue.enumerated() {
+			Task { @MainActor in
+				try? await Task.sleep(for: .milliseconds(600 * (index + 1)))
+				self.startDeferredLoad(webView)
+			}
+		}
+	}
+
+	// Kicks off a deferred restore load — unless something already has (an
+	// early activation recovers the view ahead of its slot in the trickle).
+	private func startDeferredLoad(_ webView: WKWebView) {
+		guard webView.url == nil, !webView.isLoading,
+		      let intended = (webView as? SessionWebView)?.intendedURL else { return }
+		webView.load(URLRequest(url: intended))
 	}
 
 	// Rewrites a /watch URL to resume at the recorded position.
@@ -456,7 +568,7 @@ final class WebSessionManager: ObservableObject {
 		return (url, isWatch)
 	}
 
-	private func makeWebView(kind: String, url: URL?, restorePaused: Bool = false) -> WKWebView {
+	private func makeWebView(kind: String, url: URL?, restorePaused: Bool = false, deferLoad: Bool = false) -> WKWebView {
 		let config = WKWebViewConfiguration()
 		config.websiteDataStore = dataStore
 		config.processPool = processPool
@@ -489,14 +601,51 @@ final class WebSessionManager: ObservableObject {
 			source: Injection.restorePauseScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
 
 		let webView = SessionWebView(frame: .zero, configuration: config)
+		webView.navigationDelegate = sentry
 		webView.allowsBackForwardNavigationGestures = true
 		webView.allowsMagnification = true
 		webView.isInspectable = true
 		webView.pageZoom = pageZoom
-		if let url {
+		webView.intendedURL = url
+		if let url, !deferLoad {
 			webView.load(URLRequest(url: url))
 		}
 		return webView
+	}
+}
+
+// Watches every web view for the two ways it can silently die — web content
+// process reclaimed, load failed — and routes them to the manager's recovery.
+// Weak back-reference for the same cycle reason as MessageProxy.
+private final class NavigationSentry: NSObject, WKNavigationDelegate {
+	weak var manager: WebSessionManager?
+
+	init(manager: WebSessionManager) {
+		self.manager = manager
+	}
+
+	func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+		MainActor.assumeIsolated {
+			manager?.handleProcessDeath(webView)
+		}
+	}
+
+	func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+		MainActor.assumeIsolated {
+			manager?.handleCommit(webView)
+		}
+	}
+
+	func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+		MainActor.assumeIsolated {
+			manager?.handleLoadFailure(webView, error: error)
+		}
+	}
+
+	func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+		MainActor.assumeIsolated {
+			manager?.handleLoadFailure(webView, error: error)
+		}
 	}
 }
 

@@ -20,16 +20,19 @@ final class NowPlayingBridge {
 		guard !configured else { return }
 		configured = true
 		let center = MPRemoteCommandCenter.shared()
+		// Play paths must free the restore-pause hold like a real click does,
+		// or the guard re-pauses a restored session within 300ms of a
+		// headphone/media-key play.
 		center.togglePlayPauseCommand.addTarget { _ in
 			MainActor.assumeIsolated {
 				Self.log.info("command: togglePlayPause")
-				return NowPlayingBridge.shared.run("v.paused ? v.play() : v.pause()")
+				return NowPlayingBridge.shared.run("if(v.paused){window.__erictubeHoldPaused=false;v.play();}else{v.pause();}")
 			}
 		}
 		center.playCommand.addTarget { _ in
 			MainActor.assumeIsolated {
 				Self.log.info("command: play")
-				return NowPlayingBridge.shared.run("v.play()")
+				return NowPlayingBridge.shared.run("window.__erictubeHoldPaused=false;v.play()")
 			}
 		}
 		center.pauseCommand.addTarget { _ in
