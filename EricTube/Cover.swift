@@ -2,8 +2,8 @@ import SwiftUI
 
 // A black veil over the web area for watching-without-watching: music videos
 // keep playing, but the picture stops grabbing attention. Alpha 0 = off,
-// 1 = blackout, anywhere between = dimmed. State lives in defaults so the
-// veil survives relaunch.
+// 1 = blackout, anywhere between = dimmed. The level is per session
+// (WebSessionManager owns it); new sessions are born fully covered.
 //
 // The veil must be an AppKit view: the WKWebViews are AppKit-backed and draw
 // over SwiftUI-rendered siblings, so a plain Rectangle would vanish beneath
@@ -30,13 +30,14 @@ struct CoverLayer: NSViewRepresentable {
 	}
 }
 
-// The bar control: a chunky pill that is both a slider and three tap targets.
-// Drag anywhere to set darkness continuously; a tap (no real movement) snaps
-// by zone — left third clears, middle third jumps to the preset working
-// level, right third blacks out. The preset lives in defaults
-// (coverPresetAlpha) for tuning.
+// The bar control, always showing the ACTIVE session's veil. A tap (no real
+// movement) snaps by zone — left third clears, middle third applies the
+// remembered preset, right third blacks out. Dragging fine-tunes this
+// session's level from wherever the drag lands; a drag that STARTS in the
+// middle zone is also the preset tuner: the level released there becomes the
+// new center-tap value (globally, without touching other sessions' levels).
 struct CoverSlider: View {
-	@AppStorage("coverAlpha") private var alpha = 0.0
+	@ObservedObject var sessions: WebSessionManager
 	@AppStorage("coverPresetAlpha") private var preset = 0.85
 	@State private var dragging = false
 	@State private var hovering = false
@@ -45,6 +46,7 @@ struct CoverSlider: View {
 	private let trackHeight: CGFloat = 22
 
 	var body: some View {
+		let alpha = sessions.activeCoverAlpha
 		ZStack(alignment: .leading) {
 			Capsule()
 				.fill(Color.primary.opacity(0.12))
@@ -69,6 +71,7 @@ struct CoverSlider: View {
 		.frame(width: trackWidth, height: trackHeight)
 		.frame(height: 30)
 		.contentShape(Rectangle())
+		.stopsWindowDrag()
 		.onHover { hovering = $0 }
 		.gesture(
 			DragGesture(minimumDistance: 0)
@@ -77,24 +80,34 @@ struct CoverSlider: View {
 						dragging = true
 					}
 					if dragging {
-						alpha = min(1, max(0, value.location.x / trackWidth))
+						sessions.setActiveCoverAlpha(level(at: value.location.x))
 					}
 				}
 				.onEnded { value in
-					if !dragging {
-						let zone = value.location.x / trackWidth
-						if zone < 1 / 3 {
-							alpha = 0
-						} else if zone < 2 / 3 {
-							alpha = preset
-						} else {
-							alpha = 1
+					if dragging {
+						if zone(of: value.startLocation.x) == 1 {
+							preset = level(at: value.location.x)
+						}
+					} else {
+						switch zone(of: value.location.x) {
+						case 0: sessions.setActiveCoverAlpha(0)
+						case 1: sessions.setActiveCoverAlpha(preset)
+						default: sessions.setActiveCoverAlpha(1)
 						}
 					}
 					dragging = false
 				})
-		.tooltip("Video cover — drag to dim; tap: left clears, "
-			+ "middle \(Int((preset * 100).rounded()))%, right blacks out")
+		.tooltip("Video cover for this session — tap: left clears, middle "
+			+ "\(Int((preset * 100).rounded()))%, right blacks out. Drag to "
+			+ "fine-tune; a drag from the middle also retunes the middle tap.")
+	}
+
+	private func level(at x: CGFloat) -> Double {
+		min(1, max(0, x / trackWidth))
+	}
+
+	private func zone(of x: CGFloat) -> Int {
+		x < trackWidth / 3 ? 0 : (x < trackWidth * 2 / 3 ? 1 : 2)
 	}
 
 	private func zoneTick(at fraction: CGFloat) -> some View {

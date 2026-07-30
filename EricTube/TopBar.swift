@@ -67,7 +67,7 @@ struct TopBar: View {
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)
 			.onHover { urlHovering = $0 }
-			CoverSlider()
+			CoverSlider(sessions: sessions)
 			AddToListButton(sessions: sessions, store: store)
 				.id(sessions.active)
 			IconButton("safari", help: "Open in Browser") {
@@ -85,8 +85,9 @@ struct TopBar: View {
 		.padding(.trailing, 10)
 		.frame(height: 46)
 		.frame(maxWidth: .infinity)
+		// No drag view: the native titlebar band over the bar's top half is
+		// the window-drag surface; controls opt out via .stopsWindowDrag().
 		.background(Color(nsColor: .windowBackgroundColor))
-		.background(WindowDragArea())
 	}
 
 	private func barDivider(_ height: CGFloat) -> some View {
@@ -119,6 +120,7 @@ struct IconButton: View {
 				.frame(width: 30, height: 30)
 		}
 		.buttonStyle(PressHighlightStyle())
+		.stopsWindowDrag()
 		.tooltip(help)
 	}
 }
@@ -179,6 +181,7 @@ struct URLDisplay: View {
 			.lineLimit(1)
 			.truncationMode(.middle)
 			.textSelection(.enabled)
+			.stopsWindowDrag()
 			.help(urlString)
 			.onReceive(sessions.activeWebView.publisher(for: \.url)) { url in
 				urlString = url?.absoluteString ?? ""
@@ -215,6 +218,7 @@ struct CopyURLButton: View {
 					.frame(width: 30, height: 30)
 			}
 			.buttonStyle(PressHighlightStyle())
+			.stopsWindowDrag()
 			.tooltip("Copy URL")
 			if showCopied {
 				Text("Copied")
@@ -249,6 +253,7 @@ struct AddToListButton: View {
 		}
 		.buttonStyle(PressHighlightStyle())
 		.disabled(videoId == nil || store.lists.isEmpty)
+		.stopsWindowDrag()
 		.tooltip("Add this video to a list")
 		.popover(isPresented: $showPicker, arrowEdge: .bottom) {
 			ListPickerView(store: store, allowGenrePick: false) { destination in

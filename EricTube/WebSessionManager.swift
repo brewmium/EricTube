@@ -8,6 +8,10 @@ enum SessionKey: Hashable {
 struct WatchSession: Identifiable {
 	let id = UUID()
 	let webView: WKWebView
+	// The veil level. New sessions are born fully covered — revealing a
+	// session's picture is a deliberate act, so a fresh tab can't grab
+	// attention. Restored sessions carry their saved level instead.
+	var coverAlpha: Double = 1.0
 }
 
 struct PaletteRequest: Identifiable {
@@ -76,6 +80,9 @@ final class WebSessionManager: ObservableObject {
 	@Published var paletteRequest: PaletteRequest?
 	@Published private(set) var watchSessions: [WatchSession] = []
 	@Published private(set) var musicWebView: WKWebView?
+	// Music's veil; watch sessions carry theirs in WatchSession. Same
+	// born-covered rule when the music session is created fresh.
+	@Published private(set) var musicCoverAlpha = 1.0
 	@Published private(set) var audible: Set<ObjectIdentifier> = []
 	@Published private(set) var pageZoom: Double =
 		UserDefaults.standard.object(forKey: "pageZoom") as? Double ?? 1.0
@@ -281,6 +288,32 @@ final class WebSessionManager: ObservableObject {
 		}
 	}
 
+	// MARK: - Cover veil (per session)
+
+	var activeCoverAlpha: Double {
+		coverAlpha(for: active)
+	}
+
+	func coverAlpha(for key: SessionKey) -> Double {
+		switch key {
+		case .music:
+			return musicCoverAlpha
+		case .watch(let id):
+			return watchSessions.first { $0.id == id }?.coverAlpha ?? 0
+		}
+	}
+
+	func setActiveCoverAlpha(_ alpha: Double) {
+		switch active {
+		case .music:
+			musicCoverAlpha = alpha
+		case .watch(let id):
+			guard let index = watchSessions.firstIndex(where: { $0.id == id }) else { return }
+			watchSessions[index].coverAlpha = alpha
+		}
+		scheduleSnapshot()
+	}
+
 	func isAudible(_ webView: WKWebView?) -> Bool {
 		guard let webView else { return false }
 		return audible.contains(ObjectIdentifier(webView))
@@ -452,6 +485,10 @@ final class WebSessionManager: ObservableObject {
 		var musicURL: String?
 		var tabURLs: [String]
 		var active: String
+		// Parallel to tabURLs. Optional so pre-veil snapshots still decode;
+		// missing values fall back to the legacy global "coverAlpha" key.
+		var tabAlphas: [Double]?
+		var musicAlpha: Double?
 	}
 
 	// Persisted continuously (tab ops, session switches, progress beats) so
@@ -467,11 +504,18 @@ final class WebSessionManager: ObservableObject {
 				activeKey = "tab:\(index)"
 			}
 		}
+		// URL and alpha stay paired through the nil-URL drop, or a missing
+		// URL early in the list would shift every alpha after it.
+		let tabs = watchSessions.compactMap { session in
+			snapshotURL(session.webView).map { (url: $0, alpha: session.coverAlpha) }
+		}
 		let snapshot = SessionSnapshot(
 			masterURL: nil,   // no special session anymore
 			musicURL: musicWebView.flatMap { snapshotURL($0) },
-			tabURLs: watchSessions.compactMap { snapshotURL($0.webView) },
-			active: activeKey)
+			tabURLs: tabs.map(\.url),
+			active: activeKey,
+			tabAlphas: tabs.map(\.alpha),
+			musicAlpha: musicWebView != nil ? musicCoverAlpha : nil)
 		if let data = try? JSONEncoder().encode(snapshot) {
 			UserDefaults.standard.set(data, forKey: "sessionSnapshot")
 		}
@@ -495,17 +539,25 @@ final class WebSessionManager: ObservableObject {
 		restoring = true
 		defer { restoring = false }
 
+		// Sessions saved before the per-session veil inherit the old global
+		// veil level, so an upgrade relaunch looks exactly like yesterday.
+		let legacyAlpha = UserDefaults.standard.object(forKey: "coverAlpha") as? Double ?? 0
+
 		if let music = snapshot.musicURL, let restored = resumeURL(from: music) {
 			musicWebView = makeWebView(kind: "music", url: restored.url, restorePaused: restored.isWatch, deferLoad: true)
+			musicCoverAlpha = snapshot.musicAlpha ?? legacyAlpha
 		}
 		// Legacy master URL (old snapshots) becomes the first session.
-		var sessionURLs: [String] = []
-		if let master = snapshot.masterURL { sessionURLs.append(master) }
-		sessionURLs.append(contentsOf: snapshot.tabURLs)
-		for urlString in sessionURLs {
-			guard let restored = resumeURL(from: urlString) else { continue }
+		var sessionEntries: [(url: String, alpha: Double)] = []
+		if let master = snapshot.masterURL { sessionEntries.append((master, legacyAlpha)) }
+		for (index, urlString) in snapshot.tabURLs.enumerated() {
+			let alpha = snapshot.tabAlphas.flatMap { $0.indices.contains(index) ? $0[index] : nil }
+			sessionEntries.append((urlString, alpha ?? legacyAlpha))
+		}
+		for entry in sessionEntries {
+			guard let restored = resumeURL(from: entry.url) else { continue }
 			let webView = makeWebView(kind: "watch", url: restored.url, restorePaused: true, deferLoad: true)
-			watchSessions.append(WatchSession(webView: webView))
+			watchSessions.append(WatchSession(webView: webView, coverAlpha: entry.alpha))
 		}
 		// Restore the selection. Legacy "tab:N"/"master" indices predate the
 		// prepended master session, so offset them by one.
