@@ -67,6 +67,7 @@ struct TopBar: View {
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)
 			.onHover { urlHovering = $0 }
+			CoverSlider()
 			AddToListButton(sessions: sessions, store: store)
 				.id(sessions.active)
 			IconButton("safari", help: "Open in Browser") {

@@ -5,6 +5,7 @@ struct ContentView: View {
 	@ObservedObject var store: OverlayStore
 	@AppStorage("railCollapsed") private var collapsed = false
 	@AppStorage("railWidth") private var railWidth = 280.0
+	@AppStorage("coverAlpha") private var coverAlpha = 0.0
 
 	var body: some View {
 		VStack(spacing: 0) {
@@ -35,6 +36,16 @@ struct ContentView: View {
 							// document visibility, not view position — continues.
 							.offset(x: isActive ? 0 : 100_000)
 							.zIndex(isActive ? 1 : 0)
+					}
+				}
+				// The cover rides as an overlay, not a ZStack child: overlays
+				// are structurally after every child, so its AppKit view is
+				// always added later than the web views and stacks above
+				// them — even if a new session mounts while the cover is up.
+				.overlay {
+					if coverAlpha > 0 {
+						CoverLayer(alpha: coverAlpha)
+							.allowsHitTesting(false)
 					}
 				}
 				.overlay(alignment: .topLeading) {
