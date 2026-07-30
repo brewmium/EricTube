@@ -463,6 +463,13 @@ struct SessionTabRow: View {
 		}
 		.onReceive(webView.publisher(for: \.url)) { _ in
 			videoId = sessions.currentVideoId(of: webView)
+			// A cold (never-loaded) session has no page title; its videoId
+			// still resolves via the intended URL, so show the title from the
+			// progress record. The live page title takes over on first load.
+			if title == "YouTube", let videoId,
+			   let recorded = progress.records[videoId]?.title, !recorded.isEmpty {
+				title = recorded
+			}
 		}
 	}
 }

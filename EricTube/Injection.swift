@@ -330,6 +330,44 @@ enum Injection {
 	})();
 	"""#
 
+	// Mute mirror of the pause hold, injected at documentStart. The pause
+	// guard can't bind before YouTube's player starts (it runs at documentEnd),
+	// so every restored load spurted a beat of audio before the first pause
+	// landed. This mutes any media the moment it tries to make noise while the
+	// hold is (or is about to be) on, and unmutes as soon as the hold releases.
+	// Only videos WE muted get unmuted (tracked via a marker property), so a
+	// user's own mute in YouTube's UI is never fought. Before documentEnd the
+	// hold flag doesn't exist yet; a restorePause view is treated as held in
+	// that window — that's exactly the spurt gap.
+	static let muteScript = #"""
+	(function () {
+		if (window.__erictubeMuteGuard) { return; }
+		window.__erictubeMuteGuard = true;
+		function shouldHold() {
+			if (window.__erictubeHoldPaused !== undefined) { return window.__erictubeHoldPaused === true; }
+			return window.__erictubeRestorePause === true;
+		}
+		function sweep() {
+			var hold = shouldHold();
+			var vids = document.querySelectorAll('video, audio');
+			for (var i = 0; i < vids.length; i++) {
+				var v = vids[i];
+				if (hold && !v.muted) { v.__erictubeMuted = true; v.muted = true; }
+				else if (!hold && v.__erictubeMuted) { v.__erictubeMuted = false; v.muted = false; }
+			}
+		}
+		['play', 'playing', 'volumechange'].forEach(function (t) {
+			document.addEventListener(t, function (e) {
+				if (shouldHold() && e.target instanceof HTMLMediaElement && !e.target.muted) {
+					e.target.__erictubeMuted = true;
+					e.target.muted = true;
+				}
+			}, true);
+		});
+		setInterval(sweep, 150);
+	})();
+	"""#
+
 	static let armPause = "window.__erictubeArmPause && window.__erictubeArmPause();"
 
 	// Frees a session's pause hold without playing (used when a session is

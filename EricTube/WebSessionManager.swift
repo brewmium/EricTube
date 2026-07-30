@@ -12,6 +12,11 @@ struct WatchSession: Identifiable {
 	// session's picture is a deliberate act, so a fresh tab can't grab
 	// attention. Restored sessions carry their saved level instead.
 	var coverAlpha: Double = 1.0
+	// True once the user has actually visited this session. Primed sessions
+	// are warmed (loaded muted+held) at launch; unprimed ones stay cold
+	// shells until first visit, so a relaunch never fires 27 video loads at
+	// YouTube. Priming persists across relaunches until the session closes.
+	var primed: Bool = false
 }
 
 struct PaletteRequest: Identifiable {
@@ -42,6 +47,7 @@ final class WebSessionManager: ObservableObject {
 
 	@Published var active: SessionKey = .watch(WebSessionManager.placeholderID) {
 		didSet {
+			if !restoring { markPrimed(active) }
 			if oldValue != active {
 				pauseOnLeave(oldValue)
 				if !restoring { recoverIfNeeded(webView(for: active)) }
@@ -83,6 +89,7 @@ final class WebSessionManager: ObservableObject {
 	// Music's veil; watch sessions carry theirs in WatchSession. Same
 	// born-covered rule when the music session is created fresh.
 	@Published private(set) var musicCoverAlpha = 1.0
+	private var musicPrimed = false
 	@Published private(set) var audible: Set<ObjectIdentifier> = []
 	@Published private(set) var pageZoom: Double =
 		UserDefaults.standard.object(forKey: "pageZoom") as? Double ?? 1.0
@@ -124,6 +131,18 @@ final class WebSessionManager: ObservableObject {
 			return musicWebView
 		case .watch(let id):
 			return watchSessions.first { $0.id == id }?.webView
+		}
+	}
+
+	// A user visit is what earns a session its warm start on the next launch.
+	private func markPrimed(_ key: SessionKey) {
+		switch key {
+		case .music:
+			musicPrimed = true
+		case .watch(let id):
+			guard let index = watchSessions.firstIndex(where: { $0.id == id }),
+			      !watchSessions[index].primed else { return }
+			watchSessions[index].primed = true
 		}
 	}
 
@@ -489,6 +508,11 @@ final class WebSessionManager: ObservableObject {
 		// missing values fall back to the legacy global "coverAlpha" key.
 		var tabAlphas: [Double]?
 		var musicAlpha: Double?
+		// Parallel to tabURLs: which sessions the user had visited, and so
+		// get warmed at launch. Missing (pre-lazy snapshot): the newest two
+		// plus music are treated as primed, everything else starts cold.
+		var tabPrimed: [Bool]?
+		var musicPrimed: Bool?
 	}
 
 	// Persisted continuously (tab ops, session switches, progress beats) so
@@ -504,10 +528,12 @@ final class WebSessionManager: ObservableObject {
 				activeKey = "tab:\(index)"
 			}
 		}
-		// URL and alpha stay paired through the nil-URL drop, or a missing
-		// URL early in the list would shift every alpha after it.
+		// URL, alpha and primed stay paired through the nil-URL drop, or a
+		// missing URL early in the list would shift every value after it.
 		let tabs = watchSessions.compactMap { session in
-			snapshotURL(session.webView).map { (url: $0, alpha: session.coverAlpha) }
+			snapshotURL(session.webView).map {
+				(url: $0, alpha: session.coverAlpha, primed: session.primed)
+			}
 		}
 		let snapshot = SessionSnapshot(
 			masterURL: nil,   // no special session anymore
@@ -515,7 +541,9 @@ final class WebSessionManager: ObservableObject {
 			tabURLs: tabs.map(\.url),
 			active: activeKey,
 			tabAlphas: tabs.map(\.alpha),
-			musicAlpha: musicWebView != nil ? musicCoverAlpha : nil)
+			musicAlpha: musicWebView != nil ? musicCoverAlpha : nil,
+			tabPrimed: tabs.map(\.primed),
+			musicPrimed: musicWebView != nil ? musicPrimed : nil)
 		if let data = try? JSONEncoder().encode(snapshot) {
 			UserDefaults.standard.set(data, forKey: "sessionSnapshot")
 		}
@@ -546,18 +574,22 @@ final class WebSessionManager: ObservableObject {
 		if let music = snapshot.musicURL, let restored = resumeURL(from: music) {
 			musicWebView = makeWebView(kind: "music", url: restored.url, restorePaused: restored.isWatch, deferLoad: true)
 			musicCoverAlpha = snapshot.musicAlpha ?? legacyAlpha
+			musicPrimed = snapshot.musicPrimed ?? true
 		}
 		// Legacy master URL (old snapshots) becomes the first session.
-		var sessionEntries: [(url: String, alpha: Double)] = []
-		if let master = snapshot.masterURL { sessionEntries.append((master, legacyAlpha)) }
+		var sessionEntries: [(url: String, alpha: Double, primed: Bool)] = []
+		if let master = snapshot.masterURL { sessionEntries.append((master, legacyAlpha, true)) }
 		for (index, urlString) in snapshot.tabURLs.enumerated() {
 			let alpha = snapshot.tabAlphas.flatMap { $0.indices.contains(index) ? $0[index] : nil }
-			sessionEntries.append((urlString, alpha ?? legacyAlpha))
+			// Pre-lazy snapshots have no primed data: warm the newest two.
+			let primed = snapshot.tabPrimed.flatMap { $0.indices.contains(index) ? $0[index] : nil }
+			sessionEntries.append((urlString, alpha ?? legacyAlpha, primed ?? (index < 2)))
 		}
 		for entry in sessionEntries {
 			guard let restored = resumeURL(from: entry.url) else { continue }
 			let webView = makeWebView(kind: "watch", url: restored.url, restorePaused: true, deferLoad: true)
-			watchSessions.append(WatchSession(webView: webView, coverAlpha: entry.alpha))
+			watchSessions.append(WatchSession(
+				webView: webView, coverAlpha: entry.alpha, primed: entry.primed))
 		}
 		// Restore the selection. Legacy "tab:N"/"master" indices predate the
 		// prepended master session, so offset them by one.
@@ -578,19 +610,23 @@ final class WebSessionManager: ObservableObject {
 			if let first = watchSessions.first { active = .watch(first.id) }
 		}
 
-		// Load the selected session now; trickle the rest in behind it. A
-		// relaunch used to slam every restored tab's cold load through at
-		// once — that thundering herd is what left tabs spinning on YouTube's
-		// loading circle into error pages after a bounce.
+		// Load the selected session now; trickle only the PRIMED sessions in
+		// behind it (muted + held by the restore scripts). Unprimed sessions
+		// stay cold shells — title and progress come from ProgressStore via
+		// the intended URL — and load on first visit. This keeps a relaunch
+		// from firing two dozen video loads at YouTube in seconds (bot-shaped
+		// traffic, watch-history pollution, and an audio spurt per tab), and
+		// it's also why the old full trickle existed: a thundering herd left
+		// tabs spinning into error pages after a bounce.
 		if let selected = webView(for: active) { startDeferredLoad(selected) }
 		var queue: [WKWebView] = []
-		if let musicWebView, active != .music { queue.append(musicWebView) }
-		for session in watchSessions where active != .watch(session.id) {
+		if let musicWebView, active != .music, musicPrimed { queue.append(musicWebView) }
+		for session in watchSessions where active != .watch(session.id) && session.primed {
 			queue.append(session.webView)
 		}
 		for (index, webView) in queue.enumerated() {
 			Task { @MainActor in
-				try? await Task.sleep(for: .milliseconds(600 * (index + 1)))
+				try? await Task.sleep(for: .milliseconds(1000 * (index + 1)))
 				self.startDeferredLoad(webView)
 			}
 		}
@@ -641,6 +677,9 @@ final class WebSessionManager: ObservableObject {
 				source: "window.__erictubeRestorePause = true;",
 				injectionTime: .atDocumentStart, forMainFrameOnly: true))
 		}
+		// After the restorePause flag: the mute guard reads it at documentStart.
+		controller.addUserScript(WKUserScript(
+			source: Injection.muteScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
 		controller.addUserScript(WKUserScript(
 			source: Injection.chipScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
 		controller.addUserScript(WKUserScript(
