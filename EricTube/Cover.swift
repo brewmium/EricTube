@@ -3,7 +3,7 @@ import SwiftUI
 // A black veil over the web area for watching-without-watching: music videos
 // keep playing, but the picture stops grabbing attention. Alpha 0 = off,
 // 1 = blackout, anywhere between = dimmed. The level is per session
-// (WebSessionManager owns it); new sessions are born fully covered.
+// (WebSessionManager owns it); new sessions start uncovered.
 //
 // The veil must be an AppKit view: the WKWebViews are AppKit-backed and draw
 // over SwiftUI-rendered siblings, so a plain Rectangle would vanish beneath

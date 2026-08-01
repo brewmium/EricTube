@@ -8,10 +8,10 @@ enum SessionKey: Hashable {
 struct WatchSession: Identifiable {
 	let id = UUID()
 	let webView: WKWebView
-	// The veil level. New sessions are born fully covered — revealing a
-	// session's picture is a deliberate act, so a fresh tab can't grab
-	// attention. Restored sessions carry their saved level instead.
-	var coverAlpha: Double = 1.0
+	// The veil level. New sessions are born uncovered (tried born-covered
+	// first; it read as broken) — the veil is opt-in per session. Restored
+	// sessions carry their saved level.
+	var coverAlpha: Double = 0.0
 	// True once the user has actually visited this session. Primed sessions
 	// are warmed (loaded muted+held) at launch; unprimed ones stay cold
 	// shells until first visit, so a relaunch never fires 27 video loads at
@@ -87,8 +87,8 @@ final class WebSessionManager: ObservableObject {
 	@Published private(set) var watchSessions: [WatchSession] = []
 	@Published private(set) var musicWebView: WKWebView?
 	// Music's veil; watch sessions carry theirs in WatchSession. Same
-	// born-covered rule when the music session is created fresh.
-	@Published private(set) var musicCoverAlpha = 1.0
+	// born-uncovered rule when the music session is created fresh.
+	@Published private(set) var musicCoverAlpha = 0.0
 	private var musicPrimed = false
 	@Published private(set) var audible: Set<ObjectIdentifier> = []
 	@Published private(set) var pageZoom: Double =
