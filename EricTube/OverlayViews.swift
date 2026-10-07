@@ -419,7 +419,7 @@ struct SessionTabRow: View {
 				sessions.toggleKeepLive(session.id)
 			} label: {
 				Image(systemName: playing ? "speaker.wave.2.fill"
-					: session.keepLive ? "speaker.wave.2" : "play.rectangle")
+					: session.keepLive ? "play.rectangle.fill" : "play.rectangle")
 					.foregroundStyle(playing || session.keepLive ? Color.accentColor : Color.secondary)
 					.frame(width: 24)
 					.contentShape(Rectangle())
