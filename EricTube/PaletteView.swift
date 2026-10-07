@@ -18,11 +18,11 @@ struct PaletteView: View {
 			}
 		} else {
 			VStack(alignment: .leading, spacing: 2) {
-				// Background, always: adding a tab while browsing must not
-				// yank you off the page you're on. Switch to it (and play, if
-				// autoplay-on-select is on) by clicking it in the rail.
+				// Background, always, and just a record: adding a tab while
+				// browsing must not yank you off the page you're on, and
+				// nothing loads or plays until you click it in the rail.
 				PaletteRow(icon: "play.rectangle.on.rectangle", label: "Open as tab") {
-					sessions.openWatchTab(videoId: request.videoId, activate: false)
+					sessions.openWatchTab(videoId: request.videoId, title: request.title, activate: false)
 				}
 				Divider()
 					.padding(.vertical, 2)

@@ -234,9 +234,7 @@ struct WatchPipelineView: View {
 					}
 					insertionLine("sessions", 0)
 					ForEach(Array(sessions.watchSessions.enumerated()), id: \.element.id) { offset, session in
-						SessionTabRow(sessions: sessions, progress: progress,
-							webView: session.webView, key: .watch(session.id),
-							dragPayload: session.id.uuidString,
+						SessionTabRow(sessions: sessions, progress: progress, session: session,
 							onClose: { sessions.closeWatchTab(session) })
 							.padding(.leading, 8)
 							.modifier(ReorderableRow(section: "sessions", index: offset,
@@ -245,7 +243,7 @@ struct WatchPipelineView: View {
 						insertionLine("sessions", offset + 1)
 					}
 				}
-				let openIds = Set(sessions.watchSessions.compactMap { sessions.currentVideoId(of: $0.webView) })
+				let openIds = Set(sessions.watchSessions.compactMap(\.videoId))
 				// Continue is the unfiled in-progress bucket: drop the ones
 				// open as a tab, and the ones already filed into a tier.
 				let continuing = progress.inProgress.filter {
@@ -398,39 +396,44 @@ struct RowCloseButton: View {
 	}
 }
 
-// A live session row: the always-present master (a plain YouTube session, no
-// close) or an open watch tab. Live title, playing indicator, progress bar
-// once started, and a close X only when the row is closable.
+// A session row: live or cold, it shows the tab's record (title, progress
+// once started). The leading glyph is the tab's keep-live toggle — tapping
+// it flags/unflags without switching tabs; the rest of the row selects.
 struct SessionTabRow: View {
 	@ObservedObject var sessions: WebSessionManager
 	@ObservedObject var progress: ProgressStore
-	let webView: WKWebView
-	let key: SessionKey
-	var dragPayload = ""
-	let onClose: (() -> Void)?
-	@State private var title = "YouTube"
-	@State private var videoId: String?
+	let session: WatchSession
+	let onClose: () -> Void
 	@State private var hovering = false
 
-	private var selected: Bool {
-		sessions.active == key
+	private var key: SessionKey {
+		.watch(session.id)
 	}
 
 	var body: some View {
-		let playing = sessions.isAudible(webView)
+		let playing = sessions.isAudible(session.webView)
 		HStack(spacing: 8) {
-			// The leading glyph doubles as the now-playing indicator: it turns
-			// into a blue speaker while audible instead of an inline badge that
-			// reflowed the title.
-			Image(systemName: playing ? "speaker.wave.2.fill" : "play.rectangle")
-				.foregroundStyle(playing ? Color.accentColor : Color.primary)
-				.frame(width: 24)
+			// Doubles as the now-playing indicator (filled speaker while
+			// audible) so state never reflows the title.
+			Button {
+				sessions.toggleKeepLive(session.id)
+			} label: {
+				Image(systemName: playing ? "speaker.wave.2.fill"
+					: session.keepLive ? "speaker.wave.2" : "play.rectangle")
+					.foregroundStyle(playing || session.keepLive ? Color.accentColor : Color.secondary)
+					.frame(width: 24)
+					.contentShape(Rectangle())
+			}
+			.buttonStyle(.plain)
+			.help(session.keepLive
+				? "Kept live in the background (click to release)"
+				: "Keep live in the background")
 			VStack(alignment: .leading, spacing: 3) {
-				Text(title)
+				Text(session.title)
 					.lineLimit(2)
 					.truncationMode(.tail)
 					.frame(maxWidth: .infinity, alignment: .leading)
-				if let videoId, let entry = progress.records[videoId], entry.duration > 0 {
+				if let videoId = session.videoId, let entry = progress.records[videoId], entry.duration > 0 {
 					ProgressView(value: entry.fraction)
 						.controlSize(.small)
 				}
@@ -444,33 +447,16 @@ struct SessionTabRow: View {
 		.frame(maxWidth: .infinity, alignment: .leading)
 		.background(
 			RoundedRectangle(cornerRadius: 6)
-				.fill(selected ? Color.accentColor.opacity(0.22) : Color.clear))
+				.fill(sessions.active == key ? Color.accentColor.opacity(0.22) : Color.clear))
 		.contentShape(Rectangle())
 		.overlay(alignment: .trailing) {
-			if let onClose {
-				RowCloseButton(help: "Close tab", visible: hovering, action: onClose)
-			}
+			RowCloseButton(help: "Close tab", visible: hovering, action: onClose)
 		}
 		.onTapGesture {
 			sessions.selectSession(key)
 		}
 		.onHover { hovering = $0 }
-		.draggable(dragPayload)
-		.onReceive(webView.publisher(for: \.title)) { newTitle in
-			if let newTitle, !newTitle.isEmpty {
-				title = newTitle.strippedYouTubeSuffix
-			}
-		}
-		.onReceive(webView.publisher(for: \.url)) { _ in
-			videoId = sessions.currentVideoId(of: webView)
-			// A cold (never-loaded) session has no page title; its videoId
-			// still resolves via the intended URL, so show the title from the
-			// progress record. The live page title takes over on first load.
-			if title == "YouTube", let videoId,
-			   let recorded = progress.records[videoId]?.title, !recorded.isEmpty {
-				title = recorded
-			}
-		}
+		.draggable(session.id.uuidString)
 	}
 }
 
@@ -1215,7 +1201,7 @@ private struct VideoActionsPopover: View {
 		case .menu:
 			VStack(alignment: .leading, spacing: 2) {
 				actionRow(icon: "play.rectangle.on.rectangle", label: "Open as tab", color: .primary) {
-					sessions.openWatchTab(videoId: video.videoId)
+					sessions.openWatchTab(videoId: video.videoId, title: video.title, activate: false)
 					isPresented = false
 				}
 				Divider()

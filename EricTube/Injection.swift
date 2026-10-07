@@ -33,6 +33,7 @@ enum Injection {
 		document.documentElement.appendChild(chip);
 		let currentId = null;
 		let currentRect = null;
+		let currentEl = null;
 
 		const LINKS = 'a[href*="/watch?v="], a[href*="/shorts/"]';
 		const THUMB_IMGS = 'a[href*="/watch?v="] img, a[href*="/shorts/"] img';
@@ -99,6 +100,25 @@ enum Injection {
 			return null;
 		}
 
+		// The tile's title, for "Open as tab" to name the row without
+		// loading the video: the text anchor for this id (the one without a
+		// thumbnail image — the thumb's text is just the duration badge).
+		// Null when there isn't one (end cards); native falls back to oEmbed.
+		function titleFor(start, id) {
+			let node = start;
+			for (let i = 0; node && i < 8; i++) {
+				if (node.querySelectorAll) {
+					for (const a of node.querySelectorAll(LINKS)) {
+						if (videoIdOf(a) !== id || a.querySelector('img')) { continue; }
+						const t = (a.getAttribute('title') || a.textContent || '').replace(/\s+/g, ' ').trim();
+						if (t) { return t; }
+					}
+				}
+				node = node.parentElement;
+			}
+			return null;
+		}
+
 		function show(id, r) {
 			chip.style.left = (window.scrollX + r.left + 8) + 'px';
 			chip.style.top = (window.scrollY + r.top + 8) + 'px';
@@ -117,6 +137,7 @@ enum Injection {
 			if (e.target === chip || chip.contains(e.target)) { return; }
 			const found = resolve(e.target);
 			if (found && found.rect) {
+				currentEl = e.target;
 				show(found.id, found.rect);
 				return;
 			}
@@ -146,6 +167,7 @@ enum Injection {
 			if (!currentId) { return; }
 			window.webkit.messageHandlers.erictube.postMessage({
 				kind: 'chip', videoId: currentId,
+				title: currentEl ? titleFor(currentEl, currentId) : null,
 				x: e.clientX, y: e.clientY, w: 1, h: 1
 			});
 		}, true);
