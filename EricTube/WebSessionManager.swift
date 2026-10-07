@@ -301,24 +301,29 @@ final class WebSessionManager: ObservableObject {
 		}
 	}
 
-	// The row's speaker toggle. Flagging a background tab keeps it (waking it
-	// held if cold); unflagging one quiets it and starts its grace, like a
-	// tab you just left paused.
-	func toggleKeepLive(_ id: UUID) {
+	// The row's leading glyph. On a background tab that's kept live, it's
+	// play/pause — background music can be paused and resumed without going
+	// to it. Otherwise it flips keep-live: flagging a background tab keeps
+	// it (waking it held if cold); releasing the flag only happens on the
+	// selected tab, which is live regardless.
+	func tapSessionGlyph(_ id: UUID) {
 		guard let index = index(of: id) else { return }
-		let keep = !watchSessions[index].keepLive
-		watchSessions[index].keepLive = keep
-		if active != .watch(id) {
-			if keep {
-				if recentID == id {
-					recentID = nil
-					recentExpiry?.cancel()
-				}
-				wake(id, held: true)
+		let isActive = active == .watch(id)
+		if !isActive && watchSessions[index].keepLive {
+			if let webView = watchSessions[index].webView {
+				webView.evaluateJavaScript(Injection.togglePlay, completionHandler: nil)
 			} else {
-				watchSessions[index].webView?.evaluateJavaScript(Injection.stopAndHold, completionHandler: nil)
-				makeRecent(id)
+				wake(id, held: true)
 			}
+			return
+		}
+		watchSessions[index].keepLive.toggle()
+		if !isActive {
+			if recentID == id {
+				recentID = nil
+				recentExpiry?.cancel()
+			}
+			wake(id, held: true)
 		}
 		scheduleSnapshot()
 	}

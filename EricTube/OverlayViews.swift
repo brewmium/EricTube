@@ -397,8 +397,9 @@ struct RowCloseButton: View {
 }
 
 // A session row: live or cold, it shows the tab's record (title, progress
-// once started). The leading glyph is the tab's keep-live toggle — tapping
-// it flags/unflags without switching tabs; the rest of the row selects.
+// once started). The leading glyph never switches tabs: it flags keep-live,
+// plays/pauses a kept-live background tab, and releases the flag only on
+// the selected tab. The rest of the row selects.
 struct SessionTabRow: View {
 	@ObservedObject var sessions: WebSessionManager
 	@ObservedObject var progress: ProgressStore
@@ -416,7 +417,7 @@ struct SessionTabRow: View {
 			// Doubles as the now-playing indicator (filled speaker while
 			// audible) so state never reflows the title.
 			Button {
-				sessions.toggleKeepLive(session.id)
+				sessions.tapSessionGlyph(session.id)
 			} label: {
 				Image(systemName: playing ? "speaker.wave.2.fill"
 					: session.keepLive ? "play.rectangle.fill" : "play.rectangle")
@@ -425,9 +426,9 @@ struct SessionTabRow: View {
 					.contentShape(Rectangle())
 			}
 			.buttonStyle(.plain)
-			.help(session.keepLive
-				? "Kept live in the background (click to release)"
-				: "Keep live in the background")
+			.help(!session.keepLive ? "Keep live in the background"
+				: sessions.active == .watch(session.id) ? "Kept live in the background (click to release)"
+				: playing ? "Pause" : "Play")
 			VStack(alignment: .leading, spacing: 3) {
 				Text(session.title)
 					.lineLimit(2)
