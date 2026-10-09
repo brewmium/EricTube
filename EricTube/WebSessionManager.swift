@@ -257,16 +257,57 @@ final class WebSessionManager: ObservableObject {
 	}
 
 	// Gives a cold tab a live web view at its saved spot. No-op if live.
+	// The warm spare, when there is one, just SPA-hops there — no white
+	// page, no fresh process. Either way the video arrives gated: held
+	// paused, or (not held) playing only once its picture is on screen.
 	@discardableResult
 	private func wake(_ id: UUID, held: Bool, deferLoad: Bool = false) -> WKWebView? {
 		guard let index = index(of: id) else { return nil }
 		if let live = watchSessions[index].webView { return live }
-		let webView = makeWebView(
-			kind: "watch", url: resumeURL(for: watchSessions[index]),
-			restorePaused: held, deferLoad: deferLoad)
+		let url = resumeURL(for: watchSessions[index])
+		let webView: WKWebView
+		if !deferLoad, let spare = takeSpare() {
+			hop(spare, to: url, play: !held)
+			webView = spare
+		} else {
+			webView = makeWebView(kind: "watch", url: url, restorePaused: true,
+				arrive: Self.videoId(in: url).map { ($0, Self.seconds(in: url), !held) },
+				deferLoad: deferLoad)
+		}
 		watchSessions[index].webView = webView
 		observe(webView, as: id)
 		return webView
+	}
+
+	// The parked spare, if it's usable (sitting on youtube.com, not mid-load).
+	private func takeSpare() -> WKWebView? {
+		guard let spare = parked.last, !spare.isLoading,
+		      spare.url?.host?.hasSuffix("youtube.com") == true else { return nil }
+		parked.removeLast()
+		return spare
+	}
+
+	// Drives a live page to a youtube.com URL through YouTube's own router;
+	// a video destination arrives gated (see Injection.arriveScript).
+	private func hop(_ webView: WKWebView, to url: URL, play: Bool) {
+		var path = url.path
+		if let query = url.query { path += "?\(query)" }
+		webView.evaluateJavaScript(Injection.stopAndHold, completionHandler: nil)
+		webView.evaluateJavaScript(Injection.spaNavigate(path: path), completionHandler: nil)
+		if let videoId = Self.videoId(in: url) {
+			webView.evaluateJavaScript(
+				Injection.arrive(videoId: videoId, seconds: Self.seconds(in: url), play: play),
+				completionHandler: nil)
+		}
+		(webView as? SessionWebView)?.intendedURL = url
+	}
+
+	// The t= resume point in a watch URL ("123s" or "123"), else 0.
+	nonisolated static func seconds(in url: URL) -> Double {
+		guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+		      let t = components.queryItems?.first(where: { $0.name == "t" })?.value
+		else { return 0 }
+		return Double(t.hasSuffix("s") ? String(t.dropLast()) : t) ?? 0
 	}
 
 	// Drops a background tab's web view; the record stays. Never the active
@@ -464,13 +505,14 @@ final class WebSessionManager: ObservableObject {
 			url: fullURL,
 			title: cleanTitle.flatMap { $0.isEmpty ? nil : $0 } ?? knownTitle(for: fullURL))
 		if activate {
+			// A new tab plays — but only once its picture is up.
 			let webView: WKWebView
-			if let recycled = parked.last,
-			   !recycled.isLoading, recycled.url?.host?.hasSuffix("youtube.com") == true {
-				parked.removeLast()
-				recycled.evaluateJavaScript(Injection.spaNavigate(path: path), completionHandler: nil)
-				(recycled as? SessionWebView)?.intendedURL = fullURL
-				webView = recycled
+			if let spare = takeSpare() {
+				hop(spare, to: fullURL, play: true)
+				webView = spare
+			} else if let videoId = Self.videoId(in: fullURL) {
+				webView = makeWebView(kind: "watch", url: fullURL, restorePaused: true,
+					arrive: (videoId, Self.seconds(in: fullURL), true))
 			} else {
 				webView = makeWebView(kind: "watch", url: fullURL)
 			}
@@ -898,7 +940,9 @@ final class WebSessionManager: ObservableObject {
 		return components.url ?? url
 	}
 
-	private func makeWebView(kind: String, url: URL?, restorePaused: Bool = false, deferLoad: Bool = false) -> WKWebView {
+	private func makeWebView(kind: String, url: URL?, restorePaused: Bool = false,
+	                         arrive: (videoId: String, seconds: Double, play: Bool)? = nil,
+	                         deferLoad: Bool = false) -> WKWebView {
 		let config = WKWebViewConfiguration()
 		config.websiteDataStore = dataStore
 		config.processPool = processPool
@@ -932,6 +976,14 @@ final class WebSessionManager: ObservableObject {
 			source: Injection.progressScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
 		controller.addUserScript(WKUserScript(
 			source: Injection.restorePauseScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+		// After the pause guard: an arrival takes over its hold.
+		if let arrive {
+			controller.addUserScript(WKUserScript(
+				source: Injection.arriveOnLoad(videoId: arrive.videoId, seconds: arrive.seconds, play: arrive.play),
+				injectionTime: .atDocumentStart, forMainFrameOnly: true))
+		}
+		controller.addUserScript(WKUserScript(
+			source: Injection.arriveScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
 
 		let webView = SessionWebView(frame: .zero, configuration: config)
 		webView.navigationDelegate = sentry

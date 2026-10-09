@@ -347,7 +347,12 @@ enum Injection {
 			window.__erictubeHoldPaused = false;
 		}, true);
 		window.__erictubeArmPause = function () { window.__erictubeHoldPaused = true; };
-		window.__erictubeReleasePause = function () { window.__erictubeHoldPaused = false; };
+		// An arrival in progress owns the hold (see arriveScript) — the
+		// generic release on tab switch must not let the video start early.
+		window.__erictubeReleasePause = function () {
+			if (window.__erictubeAwaitingFrame) { return; }
+			window.__erictubeHoldPaused = false;
+		};
 		if (window.__erictubeRestorePause) { window.__erictubeHoldPaused = true; }
 	})();
 	"""#
@@ -392,6 +397,100 @@ enum Injection {
 
 	static let armPause = "window.__erictubeArmPause && window.__erictubeArmPause();"
 
+	// Arrival gate for a view headed to a video while it may not be on
+	// screen yet (a reused spare SPA-hopping, a fresh view loading). The
+	// pause hold stays on until THIS video (not the page's previous one) has
+	// loaded; then it's put at its resume spot, and — if it's meant to play —
+	// it starts only once a frame has actually been presented. A detached or
+	// not-yet-painted view presents nothing, so audio can't run ahead of the
+	// picture. A seek on the paused video is what makes it present a frame.
+	// Without play, the hold stays on: the tab comes up paused, as a cold
+	// tab does. Fallbacks keep a stalled page from stranding the hold.
+	static let arriveScript = #"""
+	(function () {
+		if (window.__erictubeArriveInstalled) { return; }
+		window.__erictubeArriveInstalled = true;
+		function currentVid() {
+			return location.pathname === '/watch' ? new URLSearchParams(location.search).get('v') : null;
+		}
+		function mainVideo() {
+			return document.querySelector('video.html5-main-video') || document.querySelector('video');
+		}
+		// YouTube's player API names the video it has loaded; null if the
+		// API isn't there (then only the source swap is checked).
+		function playerVid() {
+			try {
+				const p = document.getElementById('movie_player');
+				const d = p && p.getVideoData ? p.getVideoData() : null;
+				return d && d.video_id ? d.video_id : null;
+			} catch (err) { return null; }
+		}
+		function srcOf(v) {
+			return v ? (v.currentSrc || v.src || '') : '';
+		}
+		window.__erictubeArrive = function (vid, t, play) {
+			const token = {};
+			window.__erictubeArriving = token;
+			window.__erictubeAwaitingFrame = true;
+			window.__erictubeHoldPaused = true;
+			const started = Date.now();
+			// YouTube keeps ONE <video> across SPA hops: until the player
+			// reports this id on a new source, readyState is the old video's.
+			const alreadyThere = playerVid() === vid;
+			const startSrc = srcOf(mainVideo());
+			function finish(v) {
+				if (window.__erictubeArriving !== token) { return; }
+				window.__erictubeArriving = null;
+				window.__erictubeAwaitingFrame = false;
+				if (play && v && currentVid() === vid) {
+					window.__erictubeHoldPaused = false;
+					try { v.play(); } catch (err) {}
+				}
+			}
+			const timer = setInterval(function () {
+				if (window.__erictubeArriving !== token) { clearInterval(timer); return; }
+				const v = mainVideo();
+				if (Date.now() - started > 8000) { clearInterval(timer); finish(v); return; }
+				if (currentVid() !== vid || !v || v.readyState < 2) { return; }
+				if (!alreadyThere) {
+					const pv = playerVid();
+					if (pv !== null && pv !== vid) { return; }
+					if (startSrc && srcOf(v) === startSrc) { return; }
+				}
+				clearInterval(timer);
+				if (t > 0 && Math.abs(v.currentTime - t) > 3) {
+					try { v.currentTime = t; } catch (err) {}
+				}
+				if (!play) { finish(v); return; }
+				let done = false;
+				const go = function () { if (!done) { done = true; finish(v); } };
+				if (v.requestVideoFrameCallback) { v.requestVideoFrameCallback(go); }
+				try { v.currentTime = v.currentTime; } catch (err) {}
+				setTimeout(go, 3000);
+			}, 100);
+		};
+		const pending = window.__erictubeArriveOnLoad;
+		if (pending) {
+			window.__erictubeArriveOnLoad = null;
+			window.__erictubeArrive(pending.vid, pending.t, pending.play);
+		}
+	})();
+	"""#
+
+	static func arrive(videoId: String, seconds: Double, play: Bool) -> String {
+		"window.__erictubeArrive && window.__erictubeArrive('\(safeId(videoId))', \(Int(seconds)), \(play));"
+	}
+
+	// The same arrival, queued at documentStart for a view that's still
+	// loading (arriveScript picks it up at documentEnd).
+	static func arriveOnLoad(videoId: String, seconds: Double, play: Bool) -> String {
+		"window.__erictubeArriveOnLoad = { vid: '\(safeId(videoId))', t: \(Int(seconds)), play: \(play) };"
+	}
+
+	private static func safeId(_ videoId: String) -> String {
+		videoId.filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
+	}
+
 	// Frees a session's pause hold without playing (used when a session is
 	// brought to the front by the user post-launch).
 	static let releasePause = "window.__erictubeReleasePause && window.__erictubeReleasePause();"
@@ -413,7 +512,7 @@ enum Injection {
 	// Plays the page's main video (autoplay-on-select). Releases the pause
 	// hold first, and no-ops off a /watch page so switching to the home feed
 	// stays quiet.
-	static let playNow = "(function(){if(location.pathname!=='/watch'){return;}window.__erictubeHoldPaused=false;const v=document.querySelector('video.html5-main-video')||document.querySelector('video');if(v&&v.paused){v.play();}})();"
+	static let playNow = "(function(){if(location.pathname!=='/watch'||window.__erictubeAwaitingFrame){return;}window.__erictubeHoldPaused=false;const v=document.querySelector('video.html5-main-video')||document.querySelector('video');if(v&&v.paused){v.play();}})();"
 
 	// Toggle play/pause — clicking the already-current session's row.
 	static let togglePlay = "(function(){const v=document.querySelector('video.html5-main-video')||document.querySelector('video');if(!v){return;}if(v.paused){window.__erictubeHoldPaused=false;v.play();}else{v.pause();}})();"
