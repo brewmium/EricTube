@@ -428,29 +428,82 @@ enum Injection {
 		function srcOf(v) {
 			return v ? (v.currentSrc || v.src || '') : '';
 		}
+		// Timing breadcrumbs to the native arrival log (temporary, while the
+		// early-audio bug is pinned down).
+		function trace(stage) {
+			try {
+				window.webkit.messageHandlers.erictube.postMessage({
+					kind: 'arrive', stage: stage, vis: document.visibilityState, at: Date.now()
+				});
+			} catch (err) {}
+		}
+		// Runs fn once the page is visible AND has finished a rendering
+		// update since — rAF never fires while hidden, so this can't pass
+		// for a page that isn't on screen (a parked spare, a view not yet
+		// mounted). A hidden page's timers are throttled, which is why no
+		// timer fallback may ever start playback.
+		function whenShown(fn) {
+			if (document.visibilityState !== 'visible') {
+				const onVis = function () {
+					if (document.visibilityState !== 'visible') { return; }
+					document.removeEventListener('visibilitychange', onVis);
+					whenShown(fn);
+				};
+				document.addEventListener('visibilitychange', onVis);
+				return;
+			}
+			requestAnimationFrame(function () { requestAnimationFrame(fn); });
+		}
 		window.__erictubeArrive = function (vid, t, play) {
 			const token = {};
 			window.__erictubeArriving = token;
 			window.__erictubeAwaitingFrame = true;
 			window.__erictubeHoldPaused = true;
 			const started = Date.now();
+			trace('start ' + vid + (play ? ' play' : ' held'));
 			// YouTube keeps ONE <video> across SPA hops: until the player
 			// reports this id on a new source, readyState is the old video's.
 			const alreadyThere = playerVid() === vid;
 			const startSrc = srcOf(mainVideo());
-			function finish(v) {
+			function finish(v, why) {
 				if (window.__erictubeArriving !== token) { return; }
 				window.__erictubeArriving = null;
 				window.__erictubeAwaitingFrame = false;
+				trace('finish ' + why);
 				if (play && v && currentVid() === vid) {
 					window.__erictubeHoldPaused = false;
 					try { v.play(); } catch (err) {}
 				}
 			}
+			function ready(v) {
+				trace('loaded');
+				if (t > 0 && Math.abs(v.currentTime - t) > 3) {
+					try { v.currentTime = t; } catch (err) {}
+				}
+				if (!play) { finish(v, 'held'); return; }
+				// Shown, then one presented frame of this video, then play.
+				whenShown(function () {
+					trace('shown');
+					let done = false;
+					const go = function (why) {
+						if (done) { return; }
+						done = true;
+						whenShown(function () { finish(v, why); });
+					};
+					if (v.requestVideoFrameCallback) { v.requestVideoFrameCallback(function () { go('frame'); }); }
+					try { v.currentTime = v.currentTime; } catch (err) {}
+					setTimeout(function () { go('frame-timeout'); }, 1500);
+				});
+			}
 			const timer = setInterval(function () {
 				if (window.__erictubeArriving !== token) { clearInterval(timer); return; }
 				const v = mainVideo();
-				if (Date.now() - started > 8000) { clearInterval(timer); finish(v); return; }
+				if (Date.now() - started > 8000) {
+					clearInterval(timer);
+					trace('load-timeout');
+					if (v && currentVid() === vid) { ready(v); } else { finish(null, 'gave-up'); }
+					return;
+				}
 				if (currentVid() !== vid || !v || v.readyState < 2) { return; }
 				if (!alreadyThere) {
 					const pv = playerVid();
@@ -458,15 +511,7 @@ enum Injection {
 					if (startSrc && srcOf(v) === startSrc) { return; }
 				}
 				clearInterval(timer);
-				if (t > 0 && Math.abs(v.currentTime - t) > 3) {
-					try { v.currentTime = t; } catch (err) {}
-				}
-				if (!play) { finish(v); return; }
-				let done = false;
-				const go = function () { if (!done) { done = true; finish(v); } };
-				if (v.requestVideoFrameCallback) { v.requestVideoFrameCallback(go); }
-				try { v.currentTime = v.currentTime; } catch (err) {}
-				setTimeout(go, 3000);
+				ready(v);
 			}, 100);
 		};
 		const pending = window.__erictubeArriveOnLoad;

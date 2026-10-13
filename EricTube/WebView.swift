@@ -19,6 +19,11 @@ final class SessionWebView: WKWebView {
 	var needsRecovery = false
 	var loadRetries = 0
 
+	override func viewDidMoveToWindow() {
+		super.viewDidMoveToWindow()
+		ArrivalLog.write(window == nil ? "unmounted" : "mounted", webView: self)
+	}
+
 	override func hitTest(_ point: NSPoint) -> NSView? {
 		interactive ? super.hitTest(point) : nil
 	}

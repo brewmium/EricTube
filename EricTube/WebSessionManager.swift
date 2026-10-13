@@ -273,6 +273,7 @@ final class WebSessionManager: ObservableObject {
 			webView = makeWebView(kind: "watch", url: url, restorePaused: true,
 				arrive: Self.videoId(in: url).map { ($0, Self.seconds(in: url), !held) },
 				deferLoad: deferLoad)
+			ArrivalLog.write("fresh wake -> \(url.path)?\(url.query ?? "") held=\(held)", webView: webView)
 		}
 		watchSessions[index].webView = webView
 		observe(webView, as: id)
@@ -290,6 +291,7 @@ final class WebSessionManager: ObservableObject {
 	// Drives a live page to a youtube.com URL through YouTube's own router;
 	// a video destination arrives gated (see Injection.arriveScript).
 	private func hop(_ webView: WKWebView, to url: URL, play: Bool) {
+		ArrivalLog.write("hop spare -> \(url.path)?\(url.query ?? "") play=\(play) inWindow=\(webView.window != nil)", webView: webView)
 		var path = url.path
 		if let query = url.query { path += "?\(query)" }
 		webView.evaluateJavaScript(Injection.stopAndHold, completionHandler: nil)
@@ -513,6 +515,7 @@ final class WebSessionManager: ObservableObject {
 			} else if let videoId = Self.videoId(in: fullURL) {
 				webView = makeWebView(kind: "watch", url: fullURL, restorePaused: true,
 					arrive: (videoId, Self.seconds(in: fullURL), true))
+				ArrivalLog.write("fresh open -> \(path)", webView: webView)
 			} else {
 				webView = makeWebView(kind: "watch", url: fullURL)
 			}
@@ -667,9 +670,16 @@ final class WebSessionManager: ObservableObject {
 				videoId: videoId,
 				title: body["title"] as? String,
 				anchor: CGRect(x: x, y: y, width: w, height: h))
+		case "arrive":
+			guard let webView = message.webView,
+			      let stage = body["stage"] as? String,
+			      let at = body["at"] as? Double else { return }
+			ArrivalLog.write("js \(stage) [\(body["vis"] as? String ?? "?")]",
+				webView: webView, at: Date(timeIntervalSince1970: at / 1000))
 		case "media":
 			guard let webView = message.webView,
 			      let playing = body["playing"] as? Bool else { return }
+			ArrivalLog.write("audible=\(playing)", webView: webView)
 			if playing {
 				audible.insert(ObjectIdentifier(webView))
 			} else {
@@ -1046,6 +1056,33 @@ private final class MessageProxy: NSObject, WKScriptMessageHandler {
 	func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
 		MainActor.assumeIsolated {
 			manager?.handleScriptMessage(message)
+		}
+	}
+}
+
+// Temporary timing log for the early-audio bug: native switch/mount events
+// and the page's arrival stages, one line each, in
+// ~/Library/Application Support/EricTube/arrival.log.
+enum ArrivalLog {
+	private static let url = FileManager.default
+		.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+		.appendingPathComponent("EricTube/arrival.log")
+
+	static func tag(_ webView: WKWebView) -> String {
+		String(format: "%04x", ObjectIdentifier(webView).hashValue & 0xffff)
+	}
+
+	static func write(_ line: String, webView: WKWebView, at date: Date = Date()) {
+		let formatter = DateFormatter()
+		formatter.dateFormat = "HH:mm:ss.SSS"
+		let text = "\(formatter.string(from: date)) view \(tag(webView)) \(line)\n"
+		guard let data = text.data(using: .utf8) else { return }
+		if let handle = try? FileHandle(forWritingTo: url) {
+			handle.seekToEndOfFile()
+			handle.write(data)
+			try? handle.close()
+		} else {
+			try? data.write(to: url)
 		}
 	}
 }
